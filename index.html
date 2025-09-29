@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AeroGuard: AI Air Quality Forecast</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        darkMode: 'class', // Enable class-based dark mode
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+            },
+            colors: {
+              'aqi-green': { '100': '#F0FFF4', '500': '#48BB78', '800': '#2F855A' },
+              'aqi-yellow': { '100': '#FFFFF0', '500': '#ECC94B', '800': '#B7791F' },
+              'aqi-orange': { '100': '#FFF5F0', '500': '#ED8936', '800': '#C05621' },
+              'aqi-red': { '100': '#FFF5F5', '500': '#F56565', '800': '#C53030' },
+              'aqi-purple': { '100': '#FAF5FF', '500': '#9F7AEA', '800': '#6B46C1' },
+              'aqi-maroon': { '100': '#FFF5F7', '500': '#A52A2A', '800': '#742A2A' },
+            }
+          }
+        }
+      }
+    </script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.1.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+    "react/": "https://aistudiocdn.com/react@^19.1.1/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.21.0",
+    "recharts": "https://aistudiocdn.com/recharts@^3.2.1",
+    "vite": "https://aistudiocdn.com/vite@^7.1.7",
+    "@vitejs/plugin-react-swc": "https://aistudiocdn.com/@vitejs/plugin-react-swc@^4.1.0"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

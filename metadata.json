@@ -1,0 +1,7 @@
+{
+  "name": "copy of Copy of Copy of AeroGuard: AI Air Quality Forecast",
+  "description": "An intelligent air quality forecasting application that integrates satellite data, ground sensors, and weather information to provide real-time, hyperlocal air quality reports. It offers personalized health recommendations, environmental challenges, and smart life planning powered by Google's Gemini AI.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
