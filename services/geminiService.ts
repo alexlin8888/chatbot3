@@ -1,29 +1,26 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { AQIDataPoint, UserHealthProfile, SmartScheduleSuggestion, HourlyForecastData, HistoricalDataPoint } from '../types';
 
-// 環境變數獲取函數 - 處理瀏覽器環境
+// 純瀏覽器環境的 API key 獲取
 const getGeminiApiKey = (): string => {
-  // 1. AI Studio 環境
-  if (typeof window !== 'undefined' && (window as any).process?.env?.API_KEY) {
-    return (window as any).process.env.API_KEY;
+  // 1. Vite 環境變數 (主要方式)
+  if (import.meta.env?.VITE_GEMINI_API_KEY) {
+    return import.meta.env.VITE_GEMINI_API_KEY;
   }
   
-  // 2. Vite 環境變數 (瀏覽器)
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GEMINI_API_KEY) {
-    return import.meta.env.VITE_GEMINI_API_KEY as string;
+  // 2. AI Studio 環境 (如果有全域變數)
+  if (typeof window !== 'undefined') {
+    const global = window as any;
+    if (global.API_KEY) {
+      return global.API_KEY;
+    }
+    if (global.process?.env?.API_KEY) {
+      return global.process.env.API_KEY;
+    }
   }
   
-  // 3. Node.js 環境 (如果存在)
-  if (typeof process !== 'undefined' && process.env?.VITE_GEMINI_API_KEY) {
-    return process.env.VITE_GEMINI_API_KEY;
-  }
-  
-  if (typeof process !== 'undefined' && process.env?.API_KEY) {
-    return process.env.API_KEY;
-  }
-  
-  // 4. 後備方案
-  console.warn('Using fallback Gemini API key');
+  // 3. 後備方案 - 直接使用 API key
+  console.warn('Using hardcoded API key - consider setting VITE_GEMINI_API_KEY environment variable');
   return 'AIzaSyDxHi_SBill4vTH0EPZAu9X4bslib4lvjs';
 };
 
@@ -59,10 +56,10 @@ export const generateHealthAdvice = async (
       contents: prompt,
     });
     
-    // 確保 response.text 存在且不為 undefined
-    const responseText = response.text;
-    if (!responseText) {
-      throw new Error('No response text received from Gemini API');
+    // 確保 response.text 存在
+    const responseText = response.text || '';
+    if (!responseText.trim()) {
+      throw new Error('Empty response from Gemini API');
     }
     
     return responseText;
@@ -131,9 +128,9 @@ export const generateSmartSchedule = async (
       }
     });
 
-    const responseText = response.text;
-    if (!responseText) {
-      throw new Error('No response received from Gemini API');
+    const responseText = response.text || '';
+    if (!responseText.trim()) {
+      throw new Error('Empty response from Gemini API');
     }
     
     const jsonText = responseText.trim();
@@ -144,6 +141,35 @@ export const generateSmartSchedule = async (
     // 提供基本的後備排程建議
     const generateBasicSchedule = (forecast: HourlyForecastData[]): SmartScheduleSuggestion[] => {
       const suggestions: SmartScheduleSuggestion[] = [];
+      
+      if (forecast.length === 0) {
+        return [
+          {
+            time: "Morning (8-10 AM)",
+            activity: "Light Exercise",
+            reason: "Generally better air quality in the morning",
+            health_risk: "Low"
+          },
+          {
+            time: "Afternoon (2-4 PM)",
+            activity: "Indoor Activities",
+            reason: "Air pollution often peaks during afternoon",
+            health_risk: "Moderate"
+          },
+          {
+            time: "Evening (6-8 PM)",
+            activity: "Indoor Workout",
+            reason: "Avoid rush hour pollution",
+            health_risk: "Moderate"
+          },
+          {
+            time: "Night (8-10 PM)",
+            activity: "Relaxing Walk",
+            reason: "Traffic decreases, air quality improves",
+            health_risk: "Low"
+          }
+        ];
+      }
       
       // 找出 AQI 最低的時段
       const bestAQI = Math.min(...forecast.map(f => f.aqi));
@@ -195,7 +221,7 @@ export const generateAirStoryForChild = async (
   location: string,
   historicalData: HistoricalDataPoint[]
 ): Promise<string> => {
-  if (historicalData.length === 0) {
+  if (!historicalData || historicalData.length === 0) {
     return "The air spirits in your city are taking a little rest today, but they'll be back soon with stories to tell!";
   }
   
@@ -234,9 +260,9 @@ export const generateAirStoryForChild = async (
       contents: prompt
     });
     
-    const responseText = response.text;
-    if (!responseText) {
-      throw new Error('No story response received from Gemini API');
+    const responseText = response.text || '';
+    if (!responseText.trim()) {
+      throw new Error('Empty story response from Gemini API');
     }
     
     return responseText;
@@ -254,11 +280,15 @@ export const generateAirStoryForChild = async (
       }
     };
     
-    return getBasicStory(location, avgAQI);
+    return getBasicStory(location || 'your city', avgAQI);
   }
 };
 
 export const generateImageFromStory = async (storyText: string): Promise<string | null> => {
+    if (!storyText || !storyText.trim()) {
+      return null;
+    }
+
     const prompt = `Create a whimsical, child-friendly illustration based on this story: "${storyText}". 
     
     Style: Soft watercolor, bright and cheerful colors, magical and dreamy atmosphere
