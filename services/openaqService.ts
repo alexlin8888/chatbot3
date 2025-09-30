@@ -31,39 +31,6 @@ interface OpenAQLocation {
   }>;
 }
 
-interface OpenAQLatestMeasurement {
-  value: number;
-  datetime?: {
-    utc: string;
-    local: string;
-  };
-  coordinates?: {
-    latitude: number;
-    longitude: number;
-  };
-  parameter?: {
-    id: number;
-    name: string;
-    units: string;
-    displayName?: string;
-  };
-  period?: any;
-  summary?: any;
-  coverage?: any;
-}
-
-interface OpenAQMeasurement {
-  value: number;
-  datetime?: {
-    utc: string;
-    local: string;
-  };
-  parameter?: {
-    name: string;
-    units: string;
-  };
-}
-
 // 將 OpenAQ 參數轉換為我們的 Pollutant enum
 const mapParameterToPollutant = (parameter: string): Pollutant => {
   const param = parameter.toLowerCase().replace(/[._\s]/g, '');
@@ -193,7 +160,7 @@ export const getNearbyLocations = async (
   }
 };
 
-// 獲取最新的空氣品質數據
+// 🎯 獲取最新的空氣品質數據 - 使用 /sensors/{id}/measurements 端點
 export const getLatestMeasurements = async (
   latitude: number,
   longitude: number
@@ -211,43 +178,61 @@ export const getLatestMeasurements = async (
     const location = locations[0];
     console.log(`Using location: ${location.name}, ID: ${location.id}`);
     
-    // 使用正確的 v3 API 端點格式: /locations/{id}/latest
-    const data = await makeProxyRequest(`locations/${location.id}/latest`, {});
+    // 檢查是否有 sensors
+    if (!location.sensors || location.sensors.length === 0) {
+      console.warn('No sensors found for this location');
+      return null;
+    }
+
+    // 尋找 PM2.5 sensor
+    const pm25Sensor = location.sensors.find(s => {
+      if (!s.parameter || !s.parameter.name) return false;
+      const param = s.parameter.name.toLowerCase().replace(/[._\s]/g, '');
+      return param === 'pm25';
+    });
+
+    // 如果沒有 PM2.5,使用第一個有效的 sensor
+    const targetSensor = pm25Sensor || location.sensors.find(s => s.parameter && s.parameter.name);
+
+    if (!targetSensor || !targetSensor.parameter) {
+      console.warn('No valid sensor found');
+      return null;
+    }
+
+    console.log('Using sensor:', targetSensor.id, targetSensor.parameter.displayName);
+
+    // 🎯 關鍵: 使用 /sensors/{id}/measurements 端點取得最新數據
+    const data = await makeProxyRequest(`sensors/${targetSensor.id}/measurements`, {
+      limit: 1  // 只取最新的一筆
+    });
     
     const measurements = data.results || [];
 
     if (measurements.length === 0) {
-      console.warn('No measurements found for location');
+      console.warn('No measurements found for sensor');
       return null;
     }
 
-    // 優先尋找 PM2.5 數據，並檢查 parameter 是否存在
-    let selectedMeasurement = measurements.find((m: OpenAQLatestMeasurement) => {
-      if (!m.parameter || !m.parameter.name) return false;
-      const param = m.parameter.name.toLowerCase().replace(/[._\s]/g, '');
-      return param === 'pm25';
-    }) || measurements.find((m: OpenAQLatestMeasurement) => m.parameter && m.parameter.name) || measurements[0];
+    const measurement = measurements[0];
+    
+    // 從 period.datetimeFrom 取得時間
+    const timestamp = measurement.period?.datetimeFrom?.utc || 
+                     measurement.datetime?.utc || 
+                     new Date().toISOString();
 
-    // 檢查必要的屬性是否存在
-    if (!selectedMeasurement.parameter || !selectedMeasurement.parameter.name) {
-      console.error('Invalid measurement structure:', selectedMeasurement);
-      return null;
-    }
-
-    console.log('Selected measurement:', {
-      parameter: selectedMeasurement.parameter.name,
-      value: selectedMeasurement.value,
-      location: location.name
+    console.log('Latest measurement:', {
+      parameter: targetSensor.parameter.name,
+      value: measurement.value,
+      timestamp: timestamp
     });
 
-    const aqi = calculateAQI(selectedMeasurement.parameter.name, selectedMeasurement.value);
-    const pollutant = mapParameterToPollutant(selectedMeasurement.parameter.name);
-    const timestamp = selectedMeasurement.datetime?.utc || new Date().toISOString();
+    const aqi = calculateAQI(targetSensor.parameter.name, measurement.value);
+    const pollutant = mapParameterToPollutant(targetSensor.parameter.name);
 
     return {
       aqi,
       pollutant,
-      concentration: selectedMeasurement.value,
+      concentration: measurement.value,
       timestamp,
     };
   } catch (error) {
@@ -256,7 +241,7 @@ export const getLatestMeasurements = async (
   }
 };
 
-// 獲取歷史數據
+// 🎯 獲取歷史數據 - 使用 /sensors/{id}/measurements 端點
 export const getHistoricalData = async (
   latitude: number,
   longitude: number
@@ -271,26 +256,29 @@ export const getHistoricalData = async (
 
     const location = locations[0];
     
-    // 找到 PM2.5 sensor，並檢查屬性是否存在
+    // 找到 PM2.5 sensor
     const pm25Sensor = location.sensors?.find(s => {
       if (!s.parameter || !s.parameter.name) return false;
       return s.parameter.name.toLowerCase().replace(/[._\s]/g, '') === 'pm25';
     });
     
-    if (!pm25Sensor) {
+    if (!pm25Sensor || !pm25Sensor.parameter) {
       console.warn('No PM2.5 sensor found for location');
       return [];
     }
 
+    const parameterName = pm25Sensor.parameter.name;
+
+    // 計算 30 天前的日期
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 30);
 
-    // 使用正確的 v3 API 端點格式: /sensors/{id}/days
-    const data = await makeProxyRequest(`sensors/${pm25Sensor.id}/days`, {
+    // 🎯 使用 /sensors/{id}/measurements 端點
+    const data = await makeProxyRequest(`sensors/${pm25Sensor.id}/measurements`, {
+      limit: 1000,
       date_from: startDate.toISOString(),
-      date_to: endDate.toISOString(),
-      limit: 1000
+      date_to: endDate.toISOString()
     });
     
     const measurements = data.results || [];
@@ -300,16 +288,35 @@ export const getHistoricalData = async (
       return [];
     }
 
-    // 轉換為歷史數據格式，並檢查必要屬性
-    const historicalData: HistoricalDataPoint[] = measurements
-      .filter((m: OpenAQMeasurement) => m.datetime && m.datetime.utc && m.parameter && m.parameter.name)
-      .map((m: OpenAQMeasurement) => {
-        const date = new Date(m.datetime!.utc).toLocaleDateString('en-US', { 
-          month: 'short', 
-          day: 'numeric' 
-        });
-        const aqi = calculateAQI(m.parameter!.name, m.value);
-        
+    console.log(`Found ${measurements.length} historical measurements`);
+
+    // 按日期分組並計算每日平均
+    const dailyData = new Map<string, { sum: number; count: number }>();
+
+    measurements.forEach((m: any) => {
+      // 從 period.datetimeFrom 取得時間
+      const timestamp = m.period?.datetimeFrom?.utc || m.datetime?.utc;
+      if (!timestamp || typeof m.value !== 'number') return;
+
+      const date = new Date(timestamp).toLocaleDateString('en-US', { 
+        month: 'short', 
+        day: 'numeric' 
+      });
+
+      if (!dailyData.has(date)) {
+        dailyData.set(date, { sum: 0, count: 0 });
+      }
+
+      const current = dailyData.get(date)!;
+      current.sum += m.value;
+      current.count += 1;
+    });
+
+    // 計算每日平均 AQI
+    const historicalData: HistoricalDataPoint[] = Array.from(dailyData.entries())
+      .map(([date, { sum, count }]) => {
+        const avgValue = sum / count;
+        const aqi = calculateAQI(parameterName, avgValue);
         return { date, aqi };
       });
 
@@ -320,6 +327,7 @@ export const getHistoricalData = async (
       return dateA.getTime() - dateB.getTime();
     });
 
+    console.log(`Processed ${historicalData.length} days of historical data`);
     return historicalData;
   } catch (error) {
     console.error('Error fetching historical data:', error);
