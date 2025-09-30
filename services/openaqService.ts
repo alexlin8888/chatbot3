@@ -1,10 +1,32 @@
 import type { AQIDataPoint, HourlyForecastData, HistoricalDataPoint, Pollutant } from '../types';
 import { Pollutant as PollutantEnum } from '../types';
-import { getOpenAQApiKey } from '../config/environment';
 
 const OPENAQ_BASE_URL = 'https://api.openaq.org/v3';
 
-// OpenAQ API Response Interface
+// 純瀏覽器環境的 API key 獲取
+const getOpenAQApiKey = (): string => {
+  // 1. Vite 環境變數 (主要方式)
+  if (import.meta.env?.VITE_OPENAQ_API_KEY) {
+    return import.meta.env.VITE_OPENAQ_API_KEY;
+  }
+  
+  // 2. AI Studio 環境 (如果有全域變數)
+  if (typeof window !== 'undefined') {
+    const global = window as any;
+    if (global.OPENAQ_API_KEY) {
+      return global.OPENAQ_API_KEY;
+    }
+    if (global.process?.env?.OPENAQ_API_KEY) {
+      return global.process.env.OPENAQ_API_KEY;
+    }
+  }
+  
+  // 3. 後備方案 - 直接使用 API key
+  console.warn('Using hardcoded OpenAQ API key - consider setting VITE_OPENAQ_API_KEY environment variable');
+  return '1aedaa907545aa98f9610596b00a790661281ac64533a10ff1a02eda13866d68';
+};
+
+// OpenAQ API response interfaces
 interface OpenAQMeasurement {
   locationId: number;
   location: string;
@@ -21,21 +43,21 @@ interface OpenAQMeasurement {
   };
   country: string;
   city: string;
-  isAnalysis: boolean;
-  entity: string;
-  sensorType: string;
 }
 
 interface OpenAQLocation {
-    id: number;
-    city: string;
-    name: string;
-    country: string;
-    locality: string | null;
+  id: number;
+  name: string;
+  locality: string;
+  timezone: string;
+  country: string;
+  coordinates: {
+    latitude: number;
+    longitude: number;
+  };
 }
 
-
-// Pollutant mapping: Convert OpenAQ parameters to our enum
+// 將 OpenAQ 參數轉換為我們的 Pollutant enum
 const mapParameterToPollutant = (parameter: string): Pollutant => {
   switch (parameter.toLowerCase()) {
     case 'pm25':
@@ -54,7 +76,7 @@ const mapParameterToPollutant = (parameter: string): Pollutant => {
   }
 };
 
-// AQI Calculation (PM2.5 focus)
+// 根據污染物濃度計算 AQI
 const calculateAQI = (parameter: string, value: number): number => {
   switch (parameter.toLowerCase()) {
     case 'pm25':
@@ -65,13 +87,17 @@ const calculateAQI = (parameter: string, value: number): number => {
       if (value <= 150.4) return Math.round(((200 - 151) / (150.4 - 55.5)) * (value - 55.5) + 151);
       if (value <= 250.4) return Math.round(((300 - 201) / (250.4 - 150.5)) * (value - 150.5) + 201);
       return Math.round(((500 - 301) / (500.4 - 250.5)) * (value - 250.5) + 301);
+    case 'o3':
+      const o3_ppm = value / 1000;
+      if (o3_ppm <= 0.054) return Math.round((50 / 0.054) * o3_ppm);
+      if (o3_ppm <= 0.070) return Math.round(((100 - 51) / (0.070 - 0.055)) * (o3_ppm - 0.055) + 51);
+      return Math.min(Math.round(((150 - 101) / (0.085 - 0.071)) * (o3_ppm - 0.071) + 101), 200);
     default:
-      // Simplified AQI for other pollutants as a fallback
       return Math.min(Math.round(value * 2), 300);
   }
 };
 
-// API Request Helper
+// API 請求幫助函數
 const makeOpenAQRequest = async (url: string): Promise<any> => {
   const apiKey = getOpenAQApiKey();
   
@@ -79,22 +105,22 @@ const makeOpenAQRequest = async (url: string): Promise<any> => {
     const response = await fetch(url, {
       headers: {
         'X-API-Key': apiKey,
-        'accept': 'application/json'
       },
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAQ API error: ${response.status} ${response.statusText}`);
+      throw new Error(`OpenAQ API error: ${response.status} - ${response.statusText}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    return data;
   } catch (error) {
     console.error('OpenAQ API request failed:', error);
     throw error;
   }
 };
 
-// 1. Get Nearby Locations
+// 獲取附近的監測站
 export const getNearbyLocations = async (
   latitude: number,
   longitude: number,
@@ -102,6 +128,7 @@ export const getNearbyLocations = async (
 ): Promise<OpenAQLocation[]> => {
   try {
     const url = `${OPENAQ_BASE_URL}/locations?coordinates=${latitude},${longitude}&radius=${radius}&limit=10&order_by=distance`;
+    
     const data = await makeOpenAQRequest(url);
     return data.results || [];
   } catch (error) {
@@ -110,7 +137,7 @@ export const getNearbyLocations = async (
   }
 };
 
-// 2. Get Latest Measurements
+// 獲取最新的空氣品質數據
 export const getLatestMeasurements = async (
   latitude: number,
   longitude: number
@@ -119,21 +146,24 @@ export const getLatestMeasurements = async (
     const locations = await getNearbyLocations(latitude, longitude);
     
     if (locations.length === 0) {
+      console.warn('No nearby monitoring stations found');
       return null;
     }
 
     const locationId = locations[0].id;
     const url = `${OPENAQ_BASE_URL}/latest?location_id=${locationId}&limit=100`;
+    
     const data = await makeOpenAQRequest(url);
-    const measurements: OpenAQMeasurement[] = data.results || [];
+    const measurements = data.results || [];
 
     if (measurements.length === 0) {
+      console.warn('No measurements found for location');
       return null;
     }
 
-    // Prioritize PM2.5 data
-    let selectedMeasurement = measurements.find((m) => 
-      m.parameter.toLowerCase() === 'pm25'
+    // 優先尋找 PM2.5 數據
+    let selectedMeasurement = measurements.find((m: OpenAQMeasurement) => 
+      m.parameter.toLowerCase() === 'pm25' || m.parameter.toLowerCase() === 'pm2.5'
     ) || measurements[0];
 
     const aqi = calculateAQI(selectedMeasurement.parameter, selectedMeasurement.value);
@@ -151,7 +181,7 @@ export const getLatestMeasurements = async (
   }
 };
 
-// 3. Get Historical Data (Past 30 Days)
+// 獲取歷史數據
 export const getHistoricalData = async (
   latitude: number,
   longitude: number
@@ -159,22 +189,30 @@ export const getHistoricalData = async (
   try {
     const locations = await getNearbyLocations(latitude, longitude);
     
-    if (locations.length === 0) return [];
+    if (locations.length === 0) {
+      console.warn('No nearby monitoring stations found for historical data');
+      return [];
+    }
 
     const locationId = locations[0].id;
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 30);
 
-    const url = `${OPENAQ_BASE_URL}/measurements?location_id=${locationId}&parameter=pm25&date_from=${startDate.toISOString()}&date_to=${endDate.toISOString()}&limit=1000`;
+    const url = `${OPENAQ_BASE_URL}/measurements?location_id=${locationId}&parameter=pm25&date_from=${startDate.toISOString()}&date_to=${endDate.toISOString()}&limit=1000&order_by=datetime`;
     
     const data = await makeOpenAQRequest(url);
-    const measurements: OpenAQMeasurement[] = data.results || [];
+    const measurements = data.results || [];
 
-    // Group by date and calculate daily average
+    if (measurements.length === 0) {
+      console.warn('No historical measurements found');
+      return [];
+    }
+
+    // 按日期分組並計算每日平均
     const dailyAverages: { [key: string]: { total: number; count: number } } = {};
 
-    measurements.forEach((measurement) => {
+    measurements.forEach((measurement: OpenAQMeasurement) => {
       const date = new Date(measurement.date.utc).toLocaleDateString('en-US', { 
         month: 'short', 
         day: 'numeric' 
@@ -189,6 +227,7 @@ export const getHistoricalData = async (
       dailyAverages[date].count += 1;
     });
 
+    // 轉換為歷史數據格式
     const historicalData: HistoricalDataPoint[] = Object.entries(dailyAverages).map(
       ([date, { total, count }]) => ({
         date,
@@ -196,19 +235,21 @@ export const getHistoricalData = async (
       })
     );
 
-    // Sort the data chronologically
-    return historicalData.sort((a, b) => {
-      const dateA = new Date(a.date + `, ${new Date().getFullYear()}`);
-      const dateB = new Date(b.date + `, ${new Date().getFullYear()}`);
+    // 按日期排序
+    historicalData.sort((a, b) => {
+      const dateA = new Date(a.date + ', 2024');
+      const dateB = new Date(b.date + ', 2024');
       return dateA.getTime() - dateB.getTime();
     });
+
+    return historicalData;
   } catch (error) {
     console.error('Error fetching historical data:', error);
     return [];
   }
 };
 
-// 4. Generate Forecast Data (based on current trends)
+// 獲取預測數據
 export const getForecastData = async (
   latitude: number,
   longitude: number
@@ -216,21 +257,27 @@ export const getForecastData = async (
   try {
     const latest = await getLatestMeasurements(latitude, longitude);
     
-    if (!latest) return [];
+    if (!latest) {
+      console.warn('No latest measurements available for forecast');
+      return [];
+    }
 
     const forecastData: HourlyForecastData[] = [];
     const now = new Date();
 
-    // Generate 24-hour forecast
+    // 生成未來24小時預測
     for (let i = 0; i < 24; i++) {
       const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
       
-      // Simulate diurnal variation pattern
-      let variation = (Math.random() - 0.5) * 20; // Base random fluctuation
+      // 模擬日間變化模式
+      let variation = (Math.random() - 0.5) * 20;
       const hourOfDay = hour.getHours();
       
-      if (hourOfDay >= 6 && hourOfDay <= 10) variation -= 10; // Better in the morning
-      else if (hourOfDay >= 14 && hourOfDay <= 18) variation += 15; // Worse in the afternoon
+      if (hourOfDay >= 6 && hourOfDay <= 10) {
+        variation -= 10; // 早晨空氣較好
+      } else if (hourOfDay >= 14 && hourOfDay <= 18) {
+        variation += 15; // 下午污染較重
+      }
       
       const predictedAQI = Math.max(10, Math.min(300, latest.aqi + variation));
       
@@ -250,22 +297,21 @@ export const getForecastData = async (
   }
 };
 
-
-// 5. Reverse Geocode to get location name
+// 反向地理編碼
 export const getLocationName = async (latitude: number, longitude: number): Promise<string> => {
-    try {
-      const locations = await getNearbyLocations(latitude, longitude, 50000); // Wider search for name
-      
-      if (locations.length > 0) {
-        const location = locations[0];
-        const city = location.city || location.locality || location.name;
-        // The API returns country codes, which is fine.
-        return `${city}, ${location.country}`;
-      }
-      
-      return `Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`;
-    } catch (error) {
-      console.error('Error getting location name:', error);
-      return `Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`;
+  try {
+    const locations = await getNearbyLocations(latitude, longitude);
+    
+    if (locations.length > 0) {
+      const location = locations[0];
+      const locality = location.locality || location.name || 'Unknown';
+      const country = location.country || 'Unknown';
+      return `${locality}, ${country}`;
     }
-  };
+    
+    return `Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`;
+  } catch (error) {
+    console.error('Error getting location name:', error);
+    return `Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`;
+  }
+};
