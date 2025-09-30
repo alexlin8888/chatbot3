@@ -56,7 +56,6 @@ export const generateHealthAdvice = async (
       contents: prompt,
     });
     
-    // 確保 response.text 存在
     const responseText = response.text || '';
     if (!responseText.trim()) {
       throw new Error('Empty response from Gemini API');
@@ -66,7 +65,6 @@ export const generateHealthAdvice = async (
   } catch (error) {
     console.error("Error generating health advice:", error);
     
-    // 提供基於 AQI 級別的基本建議作為後備
     const getBasicAdvice = (aqi: number, conditions: string): string => {
       if (aqi <= 50) {
         return `Air quality is good today (AQI: ${aqi}). Perfect for outdoor activities. ${conditions.includes('asthma') ? 'Your asthma should not be affected by today\'s air quality.' : ''}`;
@@ -138,7 +136,6 @@ export const generateSmartSchedule = async (
   } catch (error) {
     console.error("Error generating smart schedule:", error);
     
-    // 提供基本的後備排程建議
     const generateBasicSchedule = (forecast: HourlyForecastData[]): SmartScheduleSuggestion[] => {
       const suggestions: SmartScheduleSuggestion[] = [];
       
@@ -171,7 +168,6 @@ export const generateSmartSchedule = async (
         ];
       }
       
-      // 找出 AQI 最低的時段
       const bestAQI = Math.min(...forecast.map(f => f.aqi));
       const bestHour = forecast.find(f => f.aqi === bestAQI);
       
@@ -184,7 +180,6 @@ export const generateSmartSchedule = async (
         });
       }
       
-      // 室內活動建議
       const worstAQI = Math.max(...forecast.map(f => f.aqi));
       const worstHour = forecast.find(f => f.aqi === worstAQI);
       
@@ -195,7 +190,6 @@ export const generateSmartSchedule = async (
         health_risk: worstAQI > 150 ? "High" : "Moderate"
       });
       
-      // 添加更多基本建議
       suggestions.push({
         time: "Early Morning (6-8 AM)",
         activity: "Fresh Air Walk",
@@ -210,7 +204,7 @@ export const generateSmartSchedule = async (
         health_risk: "Moderate"
       });
       
-      return suggestions.slice(0, 4); // 確保只返回4個建議
+      return suggestions.slice(0, 4);
     };
     
     return generateBasicSchedule(hourlyForecast);
@@ -229,27 +223,60 @@ export const generateAirStoryForChild = async (
   const maxAQI = Math.max(...historicalData.map(d => d.aqi));
   const minAQI = Math.min(...historicalData.map(d => d.aqi));
   
+  // 記錄數據以便除錯
+  console.log('Story generation data:', {
+    location,
+    avgAQI: avgAQI.toFixed(1),
+    maxAQI,
+    minAQI,
+    dataPoints: historicalData.length
+  });
+  
+  // 根據 AQI 程度決定故事基調
+  let airQualityLevel = '';
+  let tone = '';
+  
+  if (avgAQI <= 50) {
+    airQualityLevel = 'excellent - the air is clean and healthy';
+    tone = 'joyful and celebratory';
+  } else if (avgAQI <= 100) {
+    airQualityLevel = 'moderate - the air is acceptable but could be better';
+    tone = 'gentle but encouraging improvement';
+  } else if (avgAQI <= 150) {
+    airQualityLevel = 'unhealthy for sensitive groups - the air needs help';
+    tone = 'concerned but hopeful, emphasizing the need for action';
+  } else if (avgAQI <= 200) {
+    airQualityLevel = 'unhealthy - the air is quite polluted';
+    tone = 'serious but age-appropriate, emphasizing protection and change';
+  } else {
+    airQualityLevel = 'very unhealthy - the air quality is poor';
+    tone = 'serious and protective, but still encouraging positive action';
+  }
+  
   const prompt = `
-    Create a magical, gentle story for children (ages 5-8) about the air in ${location}.
+    Create a magical story for children (ages 5-8) about the air in ${location}.
     
-    Air quality context:
-    - Average AQI this month: ${avgAQI.toFixed(0)}
+    IMPORTANT - Air quality context:
+    - Current situation: ${airQualityLevel}
+    - Average AQI this month: ${avgAQI.toFixed(0)} (higher numbers mean more pollution)
     - Best day: ${minAQI}
     - Most challenging day: ${maxAQI}
     
-    The story should:
-    - Personify the air as friendly characters (wind sprites, air fairies, etc.)
-    - Explain air quality changes in simple, magical terms
-    - Include positive environmental messages
-    - Be 3-4 sentences long
-    - Use simple vocabulary
-    - End on an encouraging note
+    Story requirements:
+    - Tone: ${tone}
+    - BE HONEST about air quality - don't make it sound better than it is
+    - If AQI is above 100, the story MUST acknowledge that the air needs help
+    - If AQI is above 150, clearly state that the air sprites are struggling
+    - Personify air as friendly characters (sprites, fairies) who can be tired/struggling
+    - Keep it age-appropriate but truthful
+    - Length: 4-5 sentences
+    - End with what children and families can do to help
     
-    Example themes:
-    - Cars and factories as "sleepy dragons" that blow clouds
-    - Rain as "shower fairies" that clean the air
-    - Plants as "air helpers" that make oxygen
-    - Wind as messengers carrying fresh air
+    Example themes based on AQI level:
+    - If AQI > 150: "The air sprites are very tired from all the pollution. The cloud puff dragons (cars) are making too much smoke."
+    - If AQI 100-150: "The air sprites need our help! There are too many cloud puffs in the sky."
+    - If AQI 50-100: "The air sprites are doing okay, but they could use some help from their tree friends."
+    - If AQI < 50: "The air sprites are dancing happily in the clean sky!"
     
     Do not use markdown formatting.
   `;
@@ -269,14 +296,18 @@ export const generateAirStoryForChild = async (
   } catch (error) {
     console.error("Error generating air story:", error);
     
-    // 基本的後備故事
+    // 更誠實的後備故事
     const getBasicStory = (locationName: string, avgAqi: number): string => {
       if (avgAqi <= 50) {
-        return `In the magical city of ${locationName}, the air sprites are dancing happily in the clean, sparkly sky! The wind fairies have been working hard with the tree friends to keep the air fresh and pure. Today is a perfect day for the air sprites to play and help everyone breathe easily. Let's help them by walking and riding bikes instead of using cars!`;
+        return `In ${locationName}, the air sprites are dancing joyfully in the clean, sparkly sky! The wind fairies and tree friends are working together perfectly to keep the air fresh and pure. When we breathe, we can feel the happy sprites filling our lungs with healthy, clean air. Let's keep helping them by walking, biking, and taking care of our green spaces!`;
       } else if (avgAqi <= 100) {
-        return `In ${locationName}, the air sprites are having a gentle adventure! Sometimes they get a little tired from all the busy cars and buildings, but the rain fairies often visit to wash the sky clean. The air sprites are asking everyone to help by planting more trees and using less energy. Together, we can keep the sky bright and clear!`;
+        return `In ${locationName}, the air sprites are working hard every day. Sometimes the "cloud puff dragons" (cars and factories) make grey clouds that tire out the sprites. The rain fairies help wash the sky clean, and the tree helpers work to make fresh air. We can help the sprites by using less cars, planting more trees, and choosing clean energy!`;
+      } else if (avgAqi <= 150) {
+        return `The air sprites in ${locationName} need our help! There are too many "cloud puff dragons" making grey smoke, and the poor sprites are getting very tired trying to clean it all. The wind messengers can't blow away all the pollution by themselves. We need to help by walking instead of driving, asking grown-ups to use cleaner energy, and planting lots of tree friends to help the sprites breathe easier!`;
+      } else if (avgAqi <= 200) {
+        return `Oh no! The air sprites in ${locationName} are struggling because there's so much pollution from cars and factories. The grey clouds are making it hard for the sprites to dance and play. We need to be air quality heroes! Stay inside when the air is bad, ask grown-ups to drive less, plant more trees, and tell everyone we need cleaner air for the sprites and for us!`;
       } else {
-        return `The air sprites in ${locationName} have been working extra hard lately! Some sleepy dragons (cars and factories) have been puffing out more clouds than usual. But don't worry - the wind messengers are bringing fresh air from the mountains, and the rain fairies are coming to help clean up. We can help the air sprites by staying inside when they're tired and planting more green friends (trees) to help them!`;
+        return `The air sprites in ${locationName} are very worried - the pollution is making them too tired to fly! The "cloud puff dragons" have made so many grey clouds that it's hard to see the blue sky. But we can be super helpers! We must stay indoors on bad air days, tell everyone about clean energy, plant lots of trees, and ask our leaders to protect our air. Together, we can help the sprites feel strong again!`;
       }
     };
     
@@ -284,36 +315,63 @@ export const generateAirStoryForChild = async (
   }
 };
 
+// 🎯 修改: 移除 Imagen,使用佔位圖片
 export const generateImageFromStory = async (storyText: string): Promise<string | null> => {
     if (!storyText || !storyText.trim()) {
       return null;
     }
 
-    const prompt = `Create a whimsical, child-friendly illustration based on this story: "${storyText}". 
+    console.log('Note: Imagen API requires billing. Using placeholder image instead.');
     
-    Style: Soft watercolor, bright and cheerful colors, magical and dreamy atmosphere
-    Elements: Include air sprites, friendly characters, clean sky, and nature elements
-    Mood: Optimistic, magical, educational for children
-    Composition: Wide landscape showing sky and city/nature harmony`;
+    // 返回一個漂亮的佔位 SVG 圖片
+    const placeholderSVG = `
+      <svg width="800" height="450" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="sky" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:#87CEEB;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#E0F6FF;stop-opacity:1" />
+          </linearGradient>
+        </defs>
+        <rect width="800" height="450" fill="url(#sky)"/>
+        
+        <!-- 雲朵 -->
+        <ellipse cx="150" cy="100" rx="60" ry="35" fill="white" opacity="0.8"/>
+        <ellipse cx="120" cy="110" rx="50" ry="30" fill="white" opacity="0.8"/>
+        <ellipse cx="180" cy="105" rx="45" ry="25" fill="white" opacity="0.8"/>
+        
+        <ellipse cx="600" cy="80" rx="70" ry="40" fill="white" opacity="0.7"/>
+        <ellipse cx="560" cy="90" rx="55" ry="32" fill="white" opacity="0.7"/>
+        <ellipse cx="640" cy="85" rx="50" ry="28" fill="white" opacity="0.7"/>
+        
+        <!-- 太陽 -->
+        <circle cx="650" cy="120" r="45" fill="#FFD700" opacity="0.9"/>
+        <circle cx="650" cy="120" r="35" fill="#FFA500" opacity="0.6"/>
+        
+        <!-- 地面 -->
+        <rect y="350" width="800" height="100" fill="#90EE90"/>
+        
+        <!-- 樹木 -->
+        <rect x="100" y="280" width="30" height="70" fill="#8B4513"/>
+        <circle cx="115" cy="260" r="50" fill="#228B22"/>
+        <circle cx="90" cy="270" r="40" fill="#32CD32"/>
+        <circle cx="140" cy="270" r="40" fill="#32CD32"/>
+        
+        <rect x="500" y="290" width="25" height="60" fill="#8B4513"/>
+        <circle cx="512" cy="270" r="45" fill="#228B22"/>
+        <circle cx="490" cy="280" r="35" fill="#32CD32"/>
+        <circle cx="535" cy="280" r="35" fill="#32CD32"/>
+        
+        <!-- 文字 -->
+        <text x="400" y="420" font-family="Arial, sans-serif" font-size="20" fill="#333" text-anchor="middle">
+          ✨ Air Story Illustration ✨
+        </text>
+        <text x="400" y="440" font-family="Arial, sans-serif" font-size="14" fill="#666" text-anchor="middle">
+          (Imagen API requires billing - using placeholder)
+        </text>
+      </svg>
+    `;
     
-    try {
-        const response = await ai.models.generateImages({
-            model: 'imagen-4.0-generate-001',
-            prompt: prompt,
-            config: {
-              numberOfImages: 1,
-              outputMimeType: 'image/png',
-              aspectRatio: '16:9',
-            },
-        });
-
-        if (response.generatedImages && response.generatedImages.length > 0) {
-            const base64ImageBytes: string = response.generatedImages[0].image.imageBytes;
-            return `data:image/png;base64,${base64ImageBytes}`;
-        }
-        return null;
-    } catch (error) {
-        console.error("Error generating image from story:", error);
-        return null;
-    }
+    // 將 SVG 轉換為 data URL
+    const encodedSVG = encodeURIComponent(placeholderSVG);
+    return `data:image/svg+xml,${encodedSVG}`;
 };
