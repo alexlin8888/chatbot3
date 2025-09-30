@@ -1,7 +1,7 @@
 import type { AQIDataPoint, HourlyForecastData, HistoricalDataPoint, Pollutant } from '../types';
 import { Pollutant as PollutantEnum } from '../types';
 
-// 使用 Vercel API 代理而不是直接調用 OpenAQ
+// 使用 Vercel API 代理
 const API_BASE_URL = '/api/openaq';
 
 // OpenAQ API response interfaces
@@ -28,18 +28,30 @@ interface OpenAQLocation {
   name: string;
   locality: string;
   timezone: string;
-  country: string;
+  country: {
+    id: number;
+    code: string;
+    name: string;
+  };
   coordinates: {
     latitude: number;
     longitude: number;
+  };
+  datetimeFirst?: {
+    utc: string;
+    local: string;
+  };
+  datetimeLast?: {
+    utc: string;
+    local: string;
   };
 }
 
 // 將 OpenAQ 參數轉換為我們的 Pollutant enum
 const mapParameterToPollutant = (parameter: string): Pollutant => {
-  switch (parameter.toLowerCase()) {
+  const param = parameter.toLowerCase().replace(/[._]/g, '');
+  switch (param) {
     case 'pm25':
-    case 'pm2.5':
       return PollutantEnum.PM25;
     case 'o3':
       return PollutantEnum.O3;
@@ -56,26 +68,29 @@ const mapParameterToPollutant = (parameter: string): Pollutant => {
 
 // 根據污染物濃度計算 AQI
 const calculateAQI = (parameter: string, value: number): number => {
-  switch (parameter.toLowerCase()) {
+  const param = parameter.toLowerCase().replace(/[._]/g, '');
+  
+  switch (param) {
     case 'pm25':
-    case 'pm2.5':
       if (value <= 12) return Math.round((50 / 12) * value);
       if (value <= 35.4) return Math.round(((100 - 51) / (35.4 - 12.1)) * (value - 12.1) + 51);
       if (value <= 55.4) return Math.round(((150 - 101) / (55.4 - 35.5)) * (value - 35.5) + 101);
       if (value <= 150.4) return Math.round(((200 - 151) / (150.4 - 55.5)) * (value - 55.5) + 151);
       if (value <= 250.4) return Math.round(((300 - 201) / (250.4 - 150.5)) * (value - 150.5) + 201);
       return Math.round(((500 - 301) / (500.4 - 250.5)) * (value - 250.5) + 301);
+    
     case 'o3':
       const o3_ppm = value / 1000;
       if (o3_ppm <= 0.054) return Math.round((50 / 0.054) * o3_ppm);
       if (o3_ppm <= 0.070) return Math.round(((100 - 51) / (0.070 - 0.055)) * (o3_ppm - 0.055) + 51);
       return Math.min(Math.round(((150 - 101) / (0.085 - 0.071)) * (o3_ppm - 0.071) + 101), 200);
+    
     default:
       return Math.min(Math.round(value * 2), 300);
   }
 };
 
-// API 請求幫助函數 - 使用我們的代理
+// API 請求幫助函數
 const makeProxyRequest = async (endpoint: string, params: Record<string, string | number>): Promise<any> => {
   try {
     const searchParams = new URLSearchParams();
@@ -85,13 +100,23 @@ const makeProxyRequest = async (endpoint: string, params: Record<string, string 
       searchParams.append(key, value.toString());
     });
 
+    console.log(`Making request to: ${API_BASE_URL}?${searchParams.toString()}`);
+
     const response = await fetch(`${API_BASE_URL}?${searchParams.toString()}`);
 
     if (!response.ok) {
-      throw new Error(`Proxy API error: ${response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Proxy API error:', response.status, errorData);
+      throw new Error(`Proxy API error: ${response.status} - ${errorData.message || response.statusText}`);
     }
 
     const data = await response.json();
+    console.log('Proxy response:', { 
+      endpoint, 
+      resultCount: data.results?.length || 0,
+      meta: data.meta 
+    });
+    
     return data;
   } catch (error) {
     console.error('Proxy request failed:', error);
@@ -99,25 +124,52 @@ const makeProxyRequest = async (endpoint: string, params: Record<string, string 
   }
 };
 
-// 獲取附近的監測站
+// 獲取附近的監測站 - 使用正確的 v3 API 格式
 export const getNearbyLocations = async (
   latitude: number,
   longitude: number,
   radius: number = 25000
 ): Promise<OpenAQLocation[]> => {
   try {
+    // OpenAQ v3 使用不同的參數格式
     const data = await makeProxyRequest('locations', {
       coordinates: `${latitude},${longitude}`,
       radius: radius,
       limit: 10,
-      order_by: 'distance'
+      // 移除 order_by,因為 v3 API 可能不支援
     });
     
-    return data.results || [];
+    if (!data.results || data.results.length === 0) {
+      console.warn('No nearby monitoring stations found');
+      return [];
+    }
+    
+    // 按距離排序(手動實作)
+    const locations = data.results as OpenAQLocation[];
+    locations.sort((a, b) => {
+      const distA = calculateDistance(latitude, longitude, a.coordinates.latitude, a.coordinates.longitude);
+      const distB = calculateDistance(latitude, longitude, b.coordinates.latitude, b.coordinates.longitude);
+      return distA - distB;
+    });
+    
+    return locations;
   } catch (error) {
     console.error('Error fetching nearby locations:', error);
     return [];
   }
+};
+
+// 計算兩點之間的距離(公里)
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371; // 地球半徑(公里)
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
 };
 
 // 獲取最新的空氣品質數據
@@ -126,7 +178,9 @@ export const getLatestMeasurements = async (
   longitude: number
 ): Promise<AQIDataPoint | null> => {
   try {
-    const locations = await getNearbyLocations(latitude, longitude);
+    console.log(`Fetching latest measurements for (${latitude}, ${longitude})`);
+    
+    const locations = await getNearbyLocations(latitude, longitude, 50000); // 擴大搜尋範圍
     
     if (locations.length === 0) {
       console.warn('No nearby monitoring stations found');
@@ -134,7 +188,9 @@ export const getLatestMeasurements = async (
     }
 
     const locationId = locations[0].id;
+    console.log(`Using location: ${locations[0].name}, ID: ${locationId}`);
     
+    // 使用正確的 v3 API 端點
     const data = await makeProxyRequest('latest', {
       location_id: locationId,
       limit: 100
@@ -148,9 +204,16 @@ export const getLatestMeasurements = async (
     }
 
     // 優先尋找 PM2.5 數據
-    let selectedMeasurement = measurements.find((m: OpenAQMeasurement) => 
-      m.parameter.toLowerCase() === 'pm25' || m.parameter.toLowerCase() === 'pm2.5'
-    ) || measurements[0];
+    let selectedMeasurement = measurements.find((m: OpenAQMeasurement) => {
+      const param = m.parameter.toLowerCase().replace(/[._]/g, '');
+      return param === 'pm25';
+    }) || measurements[0];
+
+    console.log('Selected measurement:', {
+      parameter: selectedMeasurement.parameter,
+      value: selectedMeasurement.value,
+      location: selectedMeasurement.location
+    });
 
     const aqi = calculateAQI(selectedMeasurement.parameter, selectedMeasurement.value);
     const pollutant = mapParameterToPollutant(selectedMeasurement.parameter);
@@ -173,7 +236,7 @@ export const getHistoricalData = async (
   longitude: number
 ): Promise<HistoricalDataPoint[]> => {
   try {
-    const locations = await getNearbyLocations(latitude, longitude);
+    const locations = await getNearbyLocations(latitude, longitude, 50000);
     
     if (locations.length === 0) {
       console.warn('No nearby monitoring stations found for historical data');
@@ -190,8 +253,7 @@ export const getHistoricalData = async (
       parameter: 'pm25',
       date_from: startDate.toISOString(),
       date_to: endDate.toISOString(),
-      limit: 1000,
-      order_by: 'datetime'
+      limit: 1000
     });
     
     const measurements = data.results || [];
@@ -292,12 +354,12 @@ export const getForecastData = async (
 // 反向地理編碼
 export const getLocationName = async (latitude: number, longitude: number): Promise<string> => {
   try {
-    const locations = await getNearbyLocations(latitude, longitude);
+    const locations = await getNearbyLocations(latitude, longitude, 50000);
     
     if (locations.length > 0) {
       const location = locations[0];
       const locality = location.locality || location.name || 'Unknown';
-      const country = location.country || 'Unknown';
+      const country = location.country?.name || 'Unknown';
       return `${locality}, ${country}`;
     }
     
