@@ -128,13 +128,16 @@ const makeProxyRequest = async (endpoint: string, params: Record<string, string 
 export const getNearbyLocations = async (
   latitude: number,
   longitude: number,
-  radius: number = 25000
+  radius: number = 25000 // OpenAQ v3 API 最大值是 25000 米
 ): Promise<OpenAQLocation[]> => {
   try {
+    // 確保 radius 不超過 API 限制
+    const validRadius = Math.min(radius, 25000);
+    
     // OpenAQ v3 使用不同的參數格式
     const data = await makeProxyRequest('locations', {
       coordinates: `${latitude},${longitude}`,
-      radius: radius,
+      radius: validRadius,
       limit: 10,
       // 移除 order_by,因為 v3 API 可能不支援
     });
@@ -180,7 +183,7 @@ export const getLatestMeasurements = async (
   try {
     console.log(`Fetching latest measurements for (${latitude}, ${longitude})`);
     
-    const locations = await getNearbyLocations(latitude, longitude, 50000); // 擴大搜尋範圍
+    const locations = await getNearbyLocations(latitude, longitude, 25000); // 使用最大允許範圍
     
     if (locations.length === 0) {
       console.warn('No nearby monitoring stations found');
@@ -236,7 +239,7 @@ export const getHistoricalData = async (
   longitude: number
 ): Promise<HistoricalDataPoint[]> => {
   try {
-    const locations = await getNearbyLocations(latitude, longitude, 50000);
+    const locations = await getNearbyLocations(latitude, longitude, 25000);
     
     if (locations.length === 0) {
       console.warn('No nearby monitoring stations found for historical data');
@@ -354,7 +357,7 @@ export const getForecastData = async (
 // 反向地理編碼
 export const getLocationName = async (latitude: number, longitude: number): Promise<string> => {
   try {
-    const locations = await getNearbyLocations(latitude, longitude, 50000);
+    const locations = await getNearbyLocations(latitude, longitude, 25000);
     
     if (locations.length > 0) {
       const location = locations[0];
