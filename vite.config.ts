@@ -1,7 +1,10 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react-swc'
+/// <reference types="vite/client" />
 
-// https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-})
+interface ImportMetaEnv {
+  readonly VITE_GEMINI_API_KEY: string
+  readonly VITE_OPENAQ_API_KEY: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
