@@ -8,9 +8,9 @@ const API_BASE_URL = '/api/openaq';
 interface OpenAQLocation {
   id: number;
   name: string;
-  locality: string;
-  timezone: string;
-  country: {
+  locality?: string;
+  timezone?: string;
+  country?: {
     id: number;
     code: string;
     name: string;
@@ -19,57 +19,46 @@ interface OpenAQLocation {
     latitude: number;
     longitude: number;
   };
-  sensors: Array<{
+  sensors?: Array<{
     id: number;
     name: string;
-    parameter: {
+    parameter?: {
       id: number;
       name: string;
       units: string;
-      displayName: string;
+      displayName?: string;
     };
   }>;
 }
 
 interface OpenAQLatestMeasurement {
   value: number;
-  datetime: {
+  datetime?: {
     utc: string;
     local: string;
   };
-  coordinates: {
+  coordinates?: {
     latitude: number;
     longitude: number;
   };
-  parameter: {
+  parameter?: {
     id: number;
     name: string;
     units: string;
-    displayName: string;
+    displayName?: string;
   };
-  period: {
-    label: string;
-    interval: string;
-    datetimeFrom: {
-      utc: string;
-      local: string;
-    };
-    datetimeTo: {
-      utc: string;
-      local: string;
-    };
-  };
-  summary: any;
-  coverage: any;
+  period?: any;
+  summary?: any;
+  coverage?: any;
 }
 
 interface OpenAQMeasurement {
   value: number;
-  datetime: {
+  datetime?: {
     utc: string;
     local: string;
   };
-  parameter: {
+  parameter?: {
     name: string;
     units: string;
   };
@@ -232,11 +221,18 @@ export const getLatestMeasurements = async (
       return null;
     }
 
-    // 優先尋找 PM2.5 數據
+    // 優先尋找 PM2.5 數據，並檢查 parameter 是否存在
     let selectedMeasurement = measurements.find((m: OpenAQLatestMeasurement) => {
+      if (!m.parameter || !m.parameter.name) return false;
       const param = m.parameter.name.toLowerCase().replace(/[._\s]/g, '');
       return param === 'pm25';
-    }) || measurements[0];
+    }) || measurements.find((m: OpenAQLatestMeasurement) => m.parameter && m.parameter.name) || measurements[0];
+
+    // 檢查必要的屬性是否存在
+    if (!selectedMeasurement.parameter || !selectedMeasurement.parameter.name) {
+      console.error('Invalid measurement structure:', selectedMeasurement);
+      return null;
+    }
 
     console.log('Selected measurement:', {
       parameter: selectedMeasurement.parameter.name,
@@ -246,12 +242,13 @@ export const getLatestMeasurements = async (
 
     const aqi = calculateAQI(selectedMeasurement.parameter.name, selectedMeasurement.value);
     const pollutant = mapParameterToPollutant(selectedMeasurement.parameter.name);
+    const timestamp = selectedMeasurement.datetime?.utc || new Date().toISOString();
 
     return {
       aqi,
       pollutant,
       concentration: selectedMeasurement.value,
-      timestamp: selectedMeasurement.datetime.utc,
+      timestamp,
     };
   } catch (error) {
     console.error('Error fetching latest measurements:', error);
@@ -274,10 +271,11 @@ export const getHistoricalData = async (
 
     const location = locations[0];
     
-    // 找到 PM2.5 sensor
-    const pm25Sensor = location.sensors?.find(s => 
-      s.parameter.name.toLowerCase().replace(/[._\s]/g, '') === 'pm25'
-    );
+    // 找到 PM2.5 sensor，並檢查屬性是否存在
+    const pm25Sensor = location.sensors?.find(s => {
+      if (!s.parameter || !s.parameter.name) return false;
+      return s.parameter.name.toLowerCase().replace(/[._\s]/g, '') === 'pm25';
+    });
     
     if (!pm25Sensor) {
       console.warn('No PM2.5 sensor found for location');
@@ -302,16 +300,18 @@ export const getHistoricalData = async (
       return [];
     }
 
-    // 轉換為歷史數據格式
-    const historicalData: HistoricalDataPoint[] = measurements.map((m: OpenAQMeasurement) => {
-      const date = new Date(m.datetime.utc).toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric' 
+    // 轉換為歷史數據格式，並檢查必要屬性
+    const historicalData: HistoricalDataPoint[] = measurements
+      .filter((m: OpenAQMeasurement) => m.datetime && m.datetime.utc && m.parameter && m.parameter.name)
+      .map((m: OpenAQMeasurement) => {
+        const date = new Date(m.datetime!.utc).toLocaleDateString('en-US', { 
+          month: 'short', 
+          day: 'numeric' 
+        });
+        const aqi = calculateAQI(m.parameter!.name, m.value);
+        
+        return { date, aqi };
       });
-      const aqi = calculateAQI(m.parameter.name, m.value);
-      
-      return { date, aqi };
-    });
 
     // 按日期排序
     historicalData.sort((a, b) => {
@@ -380,8 +380,8 @@ export const getLocationName = async (latitude: number, longitude: number): Prom
     if (locations.length > 0) {
       const location = locations[0];
       const locality = location.locality || location.name || 'Unknown';
-      const country = location.country?.name || 'Unknown';
-      return `${locality}, ${country}`;
+      const countryName = location.country?.name || 'Unknown';
+      return `${locality}, ${countryName}`;
     }
     
     return `Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`;
