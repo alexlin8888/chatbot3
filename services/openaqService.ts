@@ -5,24 +5,6 @@ import { Pollutant as PollutantEnum } from '../types';
 const API_BASE_URL = '/api/openaq';
 
 // OpenAQ API response interfaces
-interface OpenAQMeasurement {
-  locationId: number;
-  location: string;
-  parameter: string;
-  value: number;
-  date: {
-    utc: string;
-    local: string;
-  };
-  unit: string;
-  coordinates: {
-    latitude: number;
-    longitude: number;
-  };
-  country: string;
-  city: string;
-}
-
 interface OpenAQLocation {
   id: number;
   name: string;
@@ -37,29 +19,79 @@ interface OpenAQLocation {
     latitude: number;
     longitude: number;
   };
-  datetimeFirst?: {
+  sensors: Array<{
+    id: number;
+    name: string;
+    parameter: {
+      id: number;
+      name: string;
+      units: string;
+      displayName: string;
+    };
+  }>;
+}
+
+interface OpenAQLatestMeasurement {
+  value: number;
+  datetime: {
     utc: string;
     local: string;
   };
-  datetimeLast?: {
+  coordinates: {
+    latitude: number;
+    longitude: number;
+  };
+  parameter: {
+    id: number;
+    name: string;
+    units: string;
+    displayName: string;
+  };
+  period: {
+    label: string;
+    interval: string;
+    datetimeFrom: {
+      utc: string;
+      local: string;
+    };
+    datetimeTo: {
+      utc: string;
+      local: string;
+    };
+  };
+  summary: any;
+  coverage: any;
+}
+
+interface OpenAQMeasurement {
+  value: number;
+  datetime: {
     utc: string;
     local: string;
+  };
+  parameter: {
+    name: string;
+    units: string;
   };
 }
 
 // 將 OpenAQ 參數轉換為我們的 Pollutant enum
 const mapParameterToPollutant = (parameter: string): Pollutant => {
-  const param = parameter.toLowerCase().replace(/[._]/g, '');
+  const param = parameter.toLowerCase().replace(/[._\s]/g, '');
   switch (param) {
     case 'pm25':
       return PollutantEnum.PM25;
     case 'o3':
+    case 'ozone':
       return PollutantEnum.O3;
     case 'no2':
+    case 'nitrogendioxide':
       return PollutantEnum.NO2;
     case 'so2':
+    case 'sulfurdioxide':
       return PollutantEnum.SO2;
     case 'co':
+    case 'carbonmonoxide':
       return PollutantEnum.CO;
     default:
       return PollutantEnum.PM25;
@@ -68,7 +100,7 @@ const mapParameterToPollutant = (parameter: string): Pollutant => {
 
 // 根據污染物濃度計算 AQI
 const calculateAQI = (parameter: string, value: number): number => {
-  const param = parameter.toLowerCase().replace(/[._]/g, '');
+  const param = parameter.toLowerCase().replace(/[._\s]/g, '');
   
   switch (param) {
     case 'pm25':
@@ -80,6 +112,7 @@ const calculateAQI = (parameter: string, value: number): number => {
       return Math.round(((500 - 301) / (500.4 - 250.5)) * (value - 250.5) + 301);
     
     case 'o3':
+    case 'ozone':
       const o3_ppm = value / 1000;
       if (o3_ppm <= 0.054) return Math.round((50 / 0.054) * o3_ppm);
       if (o3_ppm <= 0.070) return Math.round(((100 - 51) / (0.070 - 0.055)) * (o3_ppm - 0.055) + 51);
@@ -124,22 +157,32 @@ const makeProxyRequest = async (endpoint: string, params: Record<string, string 
   }
 };
 
-// 獲取附近的監測站 - 使用正確的 v3 API 格式
+// 計算兩點之間的距離(公里)
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+};
+
+// 獲取附近的監測站
 export const getNearbyLocations = async (
   latitude: number,
   longitude: number,
-  radius: number = 25000 // OpenAQ v3 API 最大值是 25000 米
+  radius: number = 25000
 ): Promise<OpenAQLocation[]> => {
   try {
-    // 確保 radius 不超過 API 限制
     const validRadius = Math.min(radius, 25000);
     
-    // OpenAQ v3 使用不同的參數格式
     const data = await makeProxyRequest('locations', {
       coordinates: `${latitude},${longitude}`,
       radius: validRadius,
       limit: 10,
-      // 移除 order_by,因為 v3 API 可能不支援
     });
     
     if (!data.results || data.results.length === 0) {
@@ -147,7 +190,6 @@ export const getNearbyLocations = async (
       return [];
     }
     
-    // 按距離排序(手動實作)
     const locations = data.results as OpenAQLocation[];
     locations.sort((a, b) => {
       const distA = calculateDistance(latitude, longitude, a.coordinates.latitude, a.coordinates.longitude);
@@ -162,19 +204,6 @@ export const getNearbyLocations = async (
   }
 };
 
-// 計算兩點之間的距離(公里)
-const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-  const R = 6371; // 地球半徑(公里)
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
-};
-
 // 獲取最新的空氣品質數據
 export const getLatestMeasurements = async (
   latitude: number,
@@ -183,21 +212,18 @@ export const getLatestMeasurements = async (
   try {
     console.log(`Fetching latest measurements for (${latitude}, ${longitude})`);
     
-    const locations = await getNearbyLocations(latitude, longitude, 25000); // 使用最大允許範圍
+    const locations = await getNearbyLocations(latitude, longitude, 25000);
     
     if (locations.length === 0) {
       console.warn('No nearby monitoring stations found');
       return null;
     }
 
-    const locationId = locations[0].id;
-    console.log(`Using location: ${locations[0].name}, ID: ${locationId}`);
+    const location = locations[0];
+    console.log(`Using location: ${location.name}, ID: ${location.id}`);
     
-    // 使用正確的 v3 API 端點
-    const data = await makeProxyRequest('latest', {
-      location_id: locationId,
-      limit: 100
-    });
+    // 使用正確的 v3 API 端點格式: /locations/{id}/latest
+    const data = await makeProxyRequest(`locations/${location.id}/latest`, {});
     
     const measurements = data.results || [];
 
@@ -207,25 +233,25 @@ export const getLatestMeasurements = async (
     }
 
     // 優先尋找 PM2.5 數據
-    let selectedMeasurement = measurements.find((m: OpenAQMeasurement) => {
-      const param = m.parameter.toLowerCase().replace(/[._]/g, '');
+    let selectedMeasurement = measurements.find((m: OpenAQLatestMeasurement) => {
+      const param = m.parameter.name.toLowerCase().replace(/[._\s]/g, '');
       return param === 'pm25';
     }) || measurements[0];
 
     console.log('Selected measurement:', {
-      parameter: selectedMeasurement.parameter,
+      parameter: selectedMeasurement.parameter.name,
       value: selectedMeasurement.value,
-      location: selectedMeasurement.location
+      location: location.name
     });
 
-    const aqi = calculateAQI(selectedMeasurement.parameter, selectedMeasurement.value);
-    const pollutant = mapParameterToPollutant(selectedMeasurement.parameter);
+    const aqi = calculateAQI(selectedMeasurement.parameter.name, selectedMeasurement.value);
+    const pollutant = mapParameterToPollutant(selectedMeasurement.parameter.name);
 
     return {
       aqi,
       pollutant,
       concentration: selectedMeasurement.value,
-      timestamp: selectedMeasurement.date.utc,
+      timestamp: selectedMeasurement.datetime.utc,
     };
   } catch (error) {
     console.error('Error fetching latest measurements:', error);
@@ -246,14 +272,24 @@ export const getHistoricalData = async (
       return [];
     }
 
-    const locationId = locations[0].id;
+    const location = locations[0];
+    
+    // 找到 PM2.5 sensor
+    const pm25Sensor = location.sensors?.find(s => 
+      s.parameter.name.toLowerCase().replace(/[._\s]/g, '') === 'pm25'
+    );
+    
+    if (!pm25Sensor) {
+      console.warn('No PM2.5 sensor found for location');
+      return [];
+    }
+
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 30);
 
-    const data = await makeProxyRequest('measurements', {
-      location_id: locationId,
-      parameter: 'pm25',
+    // 使用正確的 v3 API 端點格式: /sensors/{id}/days
+    const data = await makeProxyRequest(`sensors/${pm25Sensor.id}/days`, {
       date_from: startDate.toISOString(),
       date_to: endDate.toISOString(),
       limit: 1000
@@ -266,36 +302,21 @@ export const getHistoricalData = async (
       return [];
     }
 
-    // 按日期分組並計算每日平均
-    const dailyAverages: { [key: string]: { total: number; count: number } } = {};
-
-    measurements.forEach((measurement: OpenAQMeasurement) => {
-      const date = new Date(measurement.date.utc).toLocaleDateString('en-US', { 
+    // 轉換為歷史數據格式
+    const historicalData: HistoricalDataPoint[] = measurements.map((m: OpenAQMeasurement) => {
+      const date = new Date(m.datetime.utc).toLocaleDateString('en-US', { 
         month: 'short', 
         day: 'numeric' 
       });
+      const aqi = calculateAQI(m.parameter.name, m.value);
       
-      if (!dailyAverages[date]) {
-        dailyAverages[date] = { total: 0, count: 0 };
-      }
-      
-      const aqi = calculateAQI(measurement.parameter, measurement.value);
-      dailyAverages[date].total += aqi;
-      dailyAverages[date].count += 1;
+      return { date, aqi };
     });
-
-    // 轉換為歷史數據格式
-    const historicalData: HistoricalDataPoint[] = Object.entries(dailyAverages).map(
-      ([date, { total, count }]) => ({
-        date,
-        aqi: Math.round(total / count),
-      })
-    );
 
     // 按日期排序
     historicalData.sort((a, b) => {
-      const dateA = new Date(a.date + ', 2024');
-      const dateB = new Date(b.date + ', 2024');
+      const dateA = new Date(a.date + ', 2025');
+      const dateB = new Date(b.date + ', 2025');
       return dateA.getTime() - dateB.getTime();
     });
 
@@ -322,18 +343,15 @@ export const getForecastData = async (
     const forecastData: HourlyForecastData[] = [];
     const now = new Date();
 
-    // 生成未來24小時預測
     for (let i = 0; i < 24; i++) {
       const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
-      
-      // 模擬日間變化模式
       let variation = (Math.random() - 0.5) * 20;
       const hourOfDay = hour.getHours();
       
       if (hourOfDay >= 6 && hourOfDay <= 10) {
-        variation -= 10; // 早晨空氣較好
+        variation -= 10;
       } else if (hourOfDay >= 14 && hourOfDay <= 18) {
-        variation += 15; // 下午污染較重
+        variation += 15;
       }
       
       const predictedAQI = Math.max(10, Math.min(300, latest.aqi + variation));
