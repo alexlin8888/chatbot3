@@ -1,30 +1,8 @@
 import type { AQIDataPoint, HourlyForecastData, HistoricalDataPoint, Pollutant } from '../types';
 import { Pollutant as PollutantEnum } from '../types';
 
-const OPENAQ_BASE_URL = 'https://api.openaq.org/v3';
-
-// 純瀏覽器環境的 API key 獲取
-const getOpenAQApiKey = (): string => {
-  // 1. Vite 環境變數 (主要方式)
-  if (import.meta.env?.VITE_OPENAQ_API_KEY) {
-    return import.meta.env.VITE_OPENAQ_API_KEY;
-  }
-  
-  // 2. AI Studio 環境 (如果有全域變數)
-  if (typeof window !== 'undefined') {
-    const global = window as any;
-    if (global.OPENAQ_API_KEY) {
-      return global.OPENAQ_API_KEY;
-    }
-    if (global.process?.env?.OPENAQ_API_KEY) {
-      return global.process.env.OPENAQ_API_KEY;
-    }
-  }
-  
-  // 3. 後備方案 - 直接使用 API key
-  console.warn('Using hardcoded OpenAQ API key - consider setting VITE_OPENAQ_API_KEY environment variable');
-  return '1aedaa907545aa98f9610596b00a790661281ac64533a10ff1a02eda13866d68';
-};
+// 使用 Vercel API 代理而不是直接調用 OpenAQ
+const API_BASE_URL = '/api/openaq';
 
 // OpenAQ API response interfaces
 interface OpenAQMeasurement {
@@ -97,25 +75,26 @@ const calculateAQI = (parameter: string, value: number): number => {
   }
 };
 
-// API 請求幫助函數
-const makeOpenAQRequest = async (url: string): Promise<any> => {
-  const apiKey = getOpenAQApiKey();
-  
+// API 請求幫助函數 - 使用我們的代理
+const makeProxyRequest = async (endpoint: string, params: Record<string, string | number>): Promise<any> => {
   try {
-    const response = await fetch(url, {
-      headers: {
-        'X-API-Key': apiKey,
-      },
+    const searchParams = new URLSearchParams();
+    searchParams.append('endpoint', endpoint);
+    
+    Object.entries(params).forEach(([key, value]) => {
+      searchParams.append(key, value.toString());
     });
 
+    const response = await fetch(`${API_BASE_URL}?${searchParams.toString()}`);
+
     if (!response.ok) {
-      throw new Error(`OpenAQ API error: ${response.status} - ${response.statusText}`);
+      throw new Error(`Proxy API error: ${response.status}`);
     }
 
     const data = await response.json();
     return data;
   } catch (error) {
-    console.error('OpenAQ API request failed:', error);
+    console.error('Proxy request failed:', error);
     throw error;
   }
 };
@@ -127,9 +106,13 @@ export const getNearbyLocations = async (
   radius: number = 25000
 ): Promise<OpenAQLocation[]> => {
   try {
-    const url = `${OPENAQ_BASE_URL}/locations?coordinates=${latitude},${longitude}&radius=${radius}&limit=10&order_by=distance`;
+    const data = await makeProxyRequest('locations', {
+      coordinates: `${latitude},${longitude}`,
+      radius: radius,
+      limit: 10,
+      order_by: 'distance'
+    });
     
-    const data = await makeOpenAQRequest(url);
     return data.results || [];
   } catch (error) {
     console.error('Error fetching nearby locations:', error);
@@ -151,9 +134,12 @@ export const getLatestMeasurements = async (
     }
 
     const locationId = locations[0].id;
-    const url = `${OPENAQ_BASE_URL}/latest?location_id=${locationId}&limit=100`;
     
-    const data = await makeOpenAQRequest(url);
+    const data = await makeProxyRequest('latest', {
+      location_id: locationId,
+      limit: 100
+    });
+    
     const measurements = data.results || [];
 
     if (measurements.length === 0) {
@@ -199,9 +185,15 @@ export const getHistoricalData = async (
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 30);
 
-    const url = `${OPENAQ_BASE_URL}/measurements?location_id=${locationId}&parameter=pm25&date_from=${startDate.toISOString()}&date_to=${endDate.toISOString()}&limit=1000&order_by=datetime`;
+    const data = await makeProxyRequest('measurements', {
+      location_id: locationId,
+      parameter: 'pm25',
+      date_from: startDate.toISOString(),
+      date_to: endDate.toISOString(),
+      limit: 1000,
+      order_by: 'datetime'
+    });
     
-    const data = await makeOpenAQRequest(url);
     const measurements = data.results || [];
 
     if (measurements.length === 0) {
