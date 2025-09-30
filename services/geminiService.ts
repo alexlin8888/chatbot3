@@ -1,7 +1,8 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import type { AQIDataPoint, UserHealthProfile, SmartScheduleSuggestion, HourlyForecastData, HistoricalDataPoint } from '../types';
 
-// FIX: Per Gemini API guidelines, the API key must be read from process.env.API_KEY. This resolves the error on import.meta.env.
+// FIX: Per @google/genai guidelines, initialize with process.env.API_KEY directly.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const generateHealthAdvice = async (
@@ -101,7 +102,8 @@ export const generateAirStoryForChild = async (
       contents: prompt
     });
     return response.text;
-  } catch (error) {
+  } catch (error)
+ {
     console.error("Error generating air story:", error);
     return "Could not generate an air story at this time. The air holds its secrets for now.";
   }
