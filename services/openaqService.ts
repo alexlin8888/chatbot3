@@ -4,16 +4,7 @@ import { Pollutant as PollutantEnum } from '../types';
 // 使用 Vercel API 代理
 const API_BASE_URL = '/api/openaq';
 
-// 參數ID對照（對應 Python 代碼）
-const PARAM_IDS: Record<string, number> = {
-  'co': 8,
-  'no2': 7,
-  'o3': 10,
-  'pm10': 1,
-  'pm25': 2,
-  'so2': 9
-};
-
+// 參數名稱映射
 const TARGET_PARAMS = ['co', 'no2', 'o3', 'pm10', 'pm25', 'so2'];
 
 // 時間對齊容忍度（分鐘）
@@ -38,6 +29,16 @@ interface OpenAQLocation {
     utc: string;
     local: string;
   };
+  sensors?: Array<{
+    id: number;
+    name: string;
+    parameter?: {
+      id: number;
+      name: string;
+      units: string;
+      displayName?: string;
+    };
+  }>;
 }
 
 interface MeasurementData {
@@ -55,7 +56,7 @@ const mapParameterToPollutant = (parameter: string): Pollutant => {
     case 'pm25':
       return PollutantEnum.PM25;
     case 'pm10':
-      return PollutantEnum.PM25; // 使用 PM2.5 作為後備
+      return PollutantEnum.PM25;
     case 'o3':
     case 'ozone':
       return PollutantEnum.O3;
@@ -101,16 +102,21 @@ const calculateAQI = (parameter: string, value: number): number => {
       return Math.min(Math.round(((150 - 101) / (0.085 - 0.071)) * (o3_ppm - 0.071) + 101), 200);
     
     case 'no2':
-      if (value <= 53) return Math.round((50 / 53) * value);
-      if (value <= 100) return Math.round(((100 - 51) / (100 - 54)) * (value - 54) + 51);
-      return Math.min(Math.round(((150 - 101) / (360 - 101)) * (value - 101) + 101), 200);
+      // NO2 in ppm, convert to ppb
+      const no2_ppb = value * 1000;
+      if (no2_ppb <= 53) return Math.round((50 / 53) * no2_ppb);
+      if (no2_ppb <= 100) return Math.round(((100 - 51) / (100 - 54)) * (no2_ppb - 54) + 51);
+      return Math.min(Math.round(((150 - 101) / (360 - 101)) * (no2_ppb - 101) + 101), 200);
     
     case 'so2':
-      if (value <= 35) return Math.round((50 / 35) * value);
-      if (value <= 75) return Math.round(((100 - 51) / (75 - 36)) * (value - 36) + 51);
-      return Math.min(Math.round(((150 - 101) / (185 - 76)) * (value - 76) + 101), 200);
+      // SO2 in ppm, convert to ppb
+      const so2_ppb = value * 1000;
+      if (so2_ppb <= 35) return Math.round((50 / 35) * so2_ppb);
+      if (so2_ppb <= 75) return Math.round(((100 - 51) / (75 - 36)) * (so2_ppb - 36) + 51);
+      return Math.min(Math.round(((150 - 101) / (185 - 76)) * (so2_ppb - 76) + 101), 200);
     
     case 'co':
+      // CO already in ppm
       const co_ppm = value;
       if (co_ppm <= 4.4) return Math.round((50 / 4.4) * co_ppm);
       if (co_ppm <= 9.4) return Math.round(((100 - 51) / (9.4 - 4.5)) * (co_ppm - 4.5) + 51);
@@ -131,26 +137,26 @@ const makeProxyRequest = async (endpoint: string, params: Record<string, string 
       searchParams.append(key, value.toString());
     });
 
-    console.log(`Making request to: ${API_BASE_URL}?${searchParams.toString()}`);
+    const url = `${API_BASE_URL}?${searchParams.toString()}`;
+    console.log(`🔍 API Request: ${url}`);
 
-    const response = await fetch(`${API_BASE_URL}?${searchParams.toString()}`);
+    const response = await fetch(url);
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      console.error('Proxy API error:', response.status, errorData);
+      console.error('❌ Proxy API error:', response.status, errorData);
       throw new Error(`Proxy API error: ${response.status} - ${errorData.message || response.statusText}`);
     }
 
     const data = await response.json();
-    console.log('Proxy response:', { 
-      endpoint, 
+    console.log(`✅ API Response for ${endpoint}:`, { 
       resultCount: data.results?.length || 0,
-      meta: data.meta 
+      hasResults: !!data.results
     });
     
     return data;
   } catch (error) {
-    console.error('Proxy request failed:', error);
+    console.error('❌ Proxy request failed:', error);
     throw error;
   }
 };
@@ -184,7 +190,7 @@ export const getNearbyLocations = async (
     });
     
     if (!data.results || data.results.length === 0) {
-      console.warn('No nearby monitoring stations found');
+      console.warn('⚠️ No nearby monitoring stations found');
       return [];
     }
     
@@ -195,6 +201,7 @@ export const getNearbyLocations = async (
       return distA - distB;
     });
     
+    console.log(`📍 Found ${locations.length} nearby locations`);
     return locations;
   } catch (error) {
     console.error('Error fetching nearby locations:', error);
@@ -202,122 +209,81 @@ export const getNearbyLocations = async (
   }
 };
 
-// 🎯 核心函數：從 /locations/{id}/latest 獲取站點最新值清單
-const getLocationLatestData = async (locationId: number): Promise<MeasurementData[]> => {
-  try {
-    const data = await makeProxyRequest(`locations/${locationId}/latest`, {
-      limit: 1000
-    });
-    
-    if (!data.results || data.results.length === 0) {
-      return [];
-    }
+// 🎯 從監測站的 sensors 獲取最新數據
+const getDataFromSensors = async (location: OpenAQLocation): Promise<MeasurementData[]> => {
+  console.log(`\n🔄 Fetching data from sensors for location: ${location.name} (ID: ${location.id})`);
+  
+  if (!location.sensors || location.sensors.length === 0) {
+    console.log('⚠️ No sensors available for this location');
+    return [];
+  }
 
-    const measurements: MeasurementData[] = [];
-    
-    for (const result of data.results) {
-      // 提取參數名
-      let parameter = '';
-      if (result.parameter?.name) {
-        parameter = result.parameter.name.toLowerCase().replace(/[._\s]/g, '');
-      } else if (result.parameter) {
-        parameter = String(result.parameter).toLowerCase().replace(/[._\s]/g, '');
+  console.log(`📡 Found ${location.sensors.length} sensors`);
+  
+  const measurements: MeasurementData[] = [];
+
+  // 過濾出我們需要的參數
+  const relevantSensors = location.sensors.filter(sensor => {
+    if (!sensor.parameter || !sensor.parameter.name) return false;
+    const paramName = sensor.parameter.name.toLowerCase().replace(/[._\s]/g, '');
+    return TARGET_PARAMS.includes(paramName);
+  });
+
+  console.log(`🎯 ${relevantSensors.length} sensors match our target parameters:`);
+  relevantSensors.forEach(s => {
+    console.log(`  - Sensor ${s.id}: ${s.parameter?.displayName || s.parameter?.name}`);
+  });
+
+  // 為每個相關的 sensor 獲取最新測量值
+  for (const sensor of relevantSensors) {
+    try {
+      const data = await makeProxyRequest(`sensors/${sensor.id}/measurements`, {
+        limit: 1  // 只取最新的一筆
+      });
+
+      if (!data.results || data.results.length === 0) {
+        console.log(`⚠️ No measurements for sensor ${sensor.id} (${sensor.parameter?.displayName})`);
+        continue;
       }
 
-      if (!parameter || typeof result.value !== 'number') continue;
+      const result = data.results[0];
 
-      // 提取時間（優先順序）
+      // 提取時間
       let ts_utc = '';
-      if (result.datetime?.utc) {
+      if (result.period?.datetimeFrom?.utc) {
+        ts_utc = result.period.datetimeFrom.utc;
+      } else if (result.datetime?.utc) {
         ts_utc = result.datetime.utc;
       } else if (result.period?.datetimeTo?.utc) {
         ts_utc = result.period.datetimeTo.utc;
-      } else if (result.period?.datetimeFrom?.utc) {
-        ts_utc = result.period.datetimeFrom.utc;
       }
 
-      if (!ts_utc) continue;
-
-      let ts_local = '';
-      if (result.datetime?.local) {
-        ts_local = result.datetime.local;
-      } else if (result.period?.datetimeTo?.local) {
-        ts_local = result.period.datetimeTo.local;
-      } else if (result.period?.datetimeFrom?.local) {
-        ts_local = result.period.datetimeFrom.local;
+      if (!ts_utc || typeof result.value !== 'number') {
+        console.log(`⚠️ Invalid data structure for sensor ${sensor.id}`);
+        continue;
       }
+
+      const paramName = sensor.parameter!.name.toLowerCase().replace(/[._\s]/g, '');
 
       measurements.push({
-        parameter,
+        parameter: paramName,
         value: result.value,
-        units: result.parameter?.units || result.units || '',
+        units: sensor.parameter!.units,
         ts_utc,
-        ts_local
-      });
-    }
-
-    return measurements;
-  } catch (error) {
-    console.error('Error fetching location latest data:', error);
-    return [];
-  }
-};
-
-// 🎯 從 /parameters/{pid}/latest 補充缺失的參數
-const getParametersLatestData = async (
-  locationId: number, 
-  missingParams: string[]
-): Promise<MeasurementData[]> => {
-  const measurements: MeasurementData[] = [];
-
-  for (const param of missingParams) {
-    const paramId = PARAM_IDS[param];
-    if (!paramId) continue;
-
-    try {
-      const data = await makeProxyRequest(`parameters/${paramId}/latest`, {
-        locationId,
-        limit: 50
+        ts_local: result.period?.datetimeFrom?.local || result.datetime?.local || ''
       });
 
-      if (!data.results || data.results.length === 0) continue;
-
-      for (const result of data.results) {
-        let ts_utc = '';
-        if (result.datetime?.utc) {
-          ts_utc = result.datetime.utc;
-        } else if (result.period?.datetimeTo?.utc) {
-          ts_utc = result.period.datetimeTo.utc;
-        } else if (result.period?.datetimeFrom?.utc) {
-          ts_utc = result.period.datetimeFrom.utc;
-        }
-
-        if (!ts_utc || typeof result.value !== 'number') continue;
-
-        let ts_local = '';
-        if (result.datetime?.local) {
-          ts_local = result.datetime.local;
-        } else if (result.period?.datetimeTo?.local) {
-          ts_local = result.period.datetimeTo.local;
-        }
-
-        measurements.push({
-          parameter: param,
-          value: result.value,
-          units: result.parameter?.units || result.units || '',
-          ts_utc,
-          ts_local
-        });
-      }
+      console.log(`✅ ${sensor.parameter?.displayName}: ${result.value} ${sensor.parameter?.units} at ${ts_utc}`);
     } catch (error) {
-      console.error(`Error fetching ${param} data:`, error);
+      console.error(`❌ Error fetching sensor ${sensor.id}:`, error);
     }
   }
 
+  console.log(`\n📊 Total measurements collected: ${measurements.length}`);
   return measurements;
 };
 
-// 🎯 批次對齊邏輯：找到接近參考時間的一批數據
+// 🎯 批次對齊邏輯
 const pickBatchNear = (
   data: MeasurementData[], 
   refTime: Date, 
@@ -326,7 +292,6 @@ const pickBatchNear = (
   if (data.length === 0) return [];
 
   const toleranceMs = toleranceMinutes * 60 * 1000;
-  const result: MeasurementData[] = [];
   const paramMap = new Map<string, MeasurementData>();
 
   for (const item of data) {
@@ -339,7 +304,6 @@ const pickBatchNear = (
         if (!existing) {
           paramMap.set(item.parameter, item);
         } else {
-          // 如果已存在，選擇時間更接近的
           const existingDiff = Math.abs(new Date(existing.ts_utc).getTime() - refTime.getTime());
           if (timeDiff < existingDiff) {
             paramMap.set(item.parameter, item);
@@ -354,90 +318,87 @@ const pickBatchNear = (
   return Array.from(paramMap.values());
 };
 
-// 🎯 主函數：獲取最新測量數據（整合 Python 邏輯）
+// 🎯 主函數：獲取最新測量數據
 export const getLatestMeasurements = async (
   latitude: number,
   longitude: number
 ): Promise<AQIDataPoint | null> => {
   try {
-    console.log(`Fetching latest measurements for (${latitude}, ${longitude})`);
+    console.log(`\n🌍 ===== Fetching Air Quality for (${latitude.toFixed(4)}, ${longitude.toFixed(4)}) =====`);
     
-    // 1. 獲取附近站點
+    // 1. 獲取附近站點（包含 sensors 資訊）
     const locations = await getNearbyLocations(latitude, longitude, 25000);
     
     if (locations.length === 0) {
-      console.warn('No nearby monitoring stations found');
+      console.warn('❌ No nearby monitoring stations found');
       return null;
     }
 
-    const location = locations[0];
-    console.log(`Using location: ${location.name}, ID: ${location.id}`);
+    // 2. 嘗試從最近的幾個站點獲取數據
+    let allMeasurements: MeasurementData[] = [];
     
-    // 2. 獲取站點的最後更新時間
-    let refTime = new Date();
-    if (location.datetimeLast?.utc) {
-      refTime = new Date(location.datetimeLast.utc);
+    for (let i = 0; i < Math.min(3, locations.length); i++) {
+      const location = locations[i];
+      const distance = calculateDistance(latitude, longitude, location.coordinates.latitude, location.coordinates.longitude);
+      
+      console.log(`\n📍 Trying location #${i+1}: ${location.name}`);
+      console.log(`   Distance: ${distance.toFixed(1)} km`);
+      console.log(`   ID: ${location.id}`);
+      console.log(`   Last update: ${location.datetimeLast?.utc || 'Unknown'}`);
+      
+      const measurements = await getDataFromSensors(location);
+      
+      if (measurements.length > 0) {
+        allMeasurements = measurements;
+        console.log(`✅ Successfully got ${measurements.length} measurements from this location`);
+        break;
+      } else {
+        console.log(`⚠️ No valid measurements from this location, trying next...`);
+      }
     }
-
-    // 3. 從 /locations/{id}/latest 獲取所有參數的最新值
-    let allMeasurements = await getLocationLatestData(location.id);
     
     if (allMeasurements.length === 0) {
-      console.warn('No measurements found for location');
+      console.warn('❌ No measurements found from any nearby location');
       return null;
     }
 
-    // 4. 找出最大時間作為批次時間
+    // 3. 找出最大時間作為批次時間
     const times = allMeasurements.map(m => new Date(m.ts_utc).getTime());
     const maxTime = Math.max(...times);
     const batchTime = new Date(maxTime);
     
-    console.log('Batch reference time:', batchTime.toISOString());
+    console.log(`\n⏰ Batch reference time: ${batchTime.toISOString()}`);
 
-    // 5. 對齊批次：先用 ±5 分鐘找
+    // 4. 對齊批次
     let batchData = pickBatchNear(allMeasurements, batchTime, TOL_MINUTES_PRIMARY);
     
-    // 如果找不到，放寬到 ±60 分鐘
     if (batchData.length === 0) {
+      console.log(`⚠️ No data within ±${TOL_MINUTES_PRIMARY} minutes, trying ±${TOL_MINUTES_FALLBACK} minutes...`);
       batchData = pickBatchNear(allMeasurements, batchTime, TOL_MINUTES_FALLBACK);
     }
 
-    // 6. 檢查還缺哪些參數
-    const foundParams = new Set(batchData.map(m => m.parameter));
-    const missingParams = TARGET_PARAMS.filter(p => !foundParams.has(p));
-
-    // 7. 用 /parameters/{pid}/latest 補充缺失的參數
-    if (missingParams.length > 0) {
-      console.log('Missing parameters:', missingParams);
-      const paramData = await getParametersLatestData(location.id, missingParams);
-      
-      if (paramData.length > 0) {
-        // 對補充的參數也做時間對齊
-        const alignedParamData = pickBatchNear(paramData, batchTime, TOL_MINUTES_PRIMARY);
-        if (alignedParamData.length === 0) {
-          const fallbackData = pickBatchNear(paramData, batchTime, TOL_MINUTES_FALLBACK);
-          batchData = [...batchData, ...fallbackData];
-        } else {
-          batchData = [...batchData, ...alignedParamData];
-        }
-      }
-    }
-
     if (batchData.length === 0) {
-      console.warn('No aligned batch data found');
+      console.warn('❌ No aligned batch data found');
       return null;
     }
 
-    console.log('Final batch data:', batchData.map(m => `${m.parameter}: ${m.value}`));
+    console.log(`\n✅ Aligned batch data (${batchData.length} parameters):`);
+    batchData.forEach(m => {
+      const timeDiff = Math.abs(new Date(m.ts_utc).getTime() - batchTime.getTime()) / 1000 / 60;
+      console.log(`  - ${m.parameter}: ${m.value} ${m.units} (${timeDiff.toFixed(1)} min diff)`);
+    });
 
-    // 8. 計算每個污染物的 AQI，找出最大值
+    // 5. 計算每個污染物的 AQI，找出最大值
     let maxAQI = 0;
     let dominantPollutant = '';
     let dominantValue = 0;
     let dominantTimestamp = batchData[0].ts_utc;
 
+    console.log(`\n🧮 Calculating AQI for each pollutant:`);
     for (const measurement of batchData) {
       const aqi = calculateAQI(measurement.parameter, measurement.value);
+      console.log(`  - ${measurement.parameter}: AQI ${aqi} (from ${measurement.value} ${measurement.units})`);
+      
       if (aqi > maxAQI) {
         maxAQI = aqi;
         dominantPollutant = measurement.parameter;
@@ -446,6 +407,10 @@ export const getLatestMeasurements = async (
       }
     }
 
+    console.log(`\n🏆 Final AQI: ${Math.round(maxAQI)}`);
+    console.log(`🏆 Dominant pollutant: ${dominantPollutant}`);
+    console.log(`===== Air Quality Fetch Complete =====\n`);
+
     return {
       aqi: Math.round(maxAQI),
       pollutant: mapParameterToPollutant(dominantPollutant),
@@ -453,7 +418,7 @@ export const getLatestMeasurements = async (
       timestamp: dominantTimestamp,
     };
   } catch (error) {
-    console.error('Error fetching latest measurements:', error);
+    console.error('❌ Fatal error fetching latest measurements:', error);
     return null;
   }
 };
@@ -464,6 +429,8 @@ export const getHistoricalData = async (
   longitude: number
 ): Promise<HistoricalDataPoint[]> => {
   try {
+    console.log(`\n📈 Fetching historical data...`);
+    
     const locations = await getNearbyLocations(latitude, longitude, 25000);
     
     if (locations.length === 0) {
@@ -473,95 +440,88 @@ export const getHistoricalData = async (
 
     const location = locations[0];
     
-    // 獲取最新數據以確定主要參數
-    const latestData = await getLocationLatestData(location.id);
-    if (latestData.length === 0) {
-      console.warn('No latest data to determine parameter');
+    // 找到 PM2.5 sensor
+    const pm25Sensor = location.sensors?.find(s => {
+      if (!s.parameter || !s.parameter.name) return false;
+      const paramName = s.parameter.name.toLowerCase().replace(/[._\s]/g, '');
+      return paramName === 'pm25';
+    });
+
+    if (!pm25Sensor) {
+      console.warn('No PM2.5 sensor found for historical data');
       return [];
     }
 
-    // 優先使用 PM2.5，如果沒有則使用其他參數
-    let targetParam = latestData.find(m => m.parameter === 'pm25');
-    if (!targetParam) {
-      targetParam = latestData.find(m => ['pm10', 'o3', 'no2'].includes(m.parameter));
-    }
-    if (!targetParam) {
-      targetParam = latestData[0];
-    }
-
-    const paramId = PARAM_IDS[targetParam.parameter];
-    if (!paramId) {
-      console.warn('Cannot find parameter ID');
-      return [];
-    }
-
-    // 計算 30 天前的日期
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 30);
 
-    const data = await makeProxyRequest(`parameters/${paramId}/measurements`, {
-      location_id: location.id,
-      limit: 1000,
-      date_from: startDate.toISOString(),
-      date_to: endDate.toISOString()
-    });
-    
-    const measurements = data.results || [];
+    try {
+      const data = await makeProxyRequest(`sensors/${pm25Sensor.id}/measurements`, {
+        limit: 1000,
+        date_from: startDate.toISOString(),
+        date_to: endDate.toISOString()
+      });
+      
+      const measurements = data.results || [];
 
-    if (measurements.length === 0) {
-      console.warn('No historical measurements found');
+      if (measurements.length === 0) {
+        console.warn('No historical measurements found');
+        return [];
+      }
+
+      console.log(`Found ${measurements.length} historical measurements`);
+
+      // 按日期分組並計算每日平均
+      const dailyData = new Map<string, { sum: number; count: number }>();
+
+      for (const m of measurements) {
+        let timestamp = '';
+        if (m.period?.datetimeFrom?.utc) {
+          timestamp = m.period.datetimeFrom.utc;
+        } else if (m.datetime?.utc) {
+          timestamp = m.datetime.utc;
+        }
+        
+        if (!timestamp || typeof m.value !== 'number') continue;
+
+        const date = new Date(timestamp).toLocaleDateString('en-US', { 
+          month: 'short', 
+          day: 'numeric' 
+        });
+
+        if (!dailyData.has(date)) {
+          dailyData.set(date, { sum: 0, count: 0 });
+        }
+
+        const current = dailyData.get(date)!;
+        current.sum += m.value;
+        current.count += 1;
+      }
+
+      // 計算每日平均 AQI
+      const historicalData: HistoricalDataPoint[] = Array.from(dailyData.entries())
+        .map(([date, { sum, count }]) => {
+          const avgValue = sum / count;
+          const aqi = calculateAQI('pm25', avgValue);
+          return { date, aqi: Math.round(aqi) };
+        });
+
+      // 按日期排序
+      historicalData.sort((a, b) => {
+        const dateA = new Date(a.date + ', 2025');
+        const dateB = new Date(b.date + ', 2025');
+        return dateA.getTime() - dateB.getTime();
+      });
+
+      console.log(`✅ Processed ${historicalData.length} days of historical data`);
+      return historicalData;
+    } catch (error) {
+      console.error('Error fetching historical measurements:', error);
       return [];
     }
-
-    console.log(`Found ${measurements.length} historical measurements`);
-
-    // 按日期分組並計算每日平均
-    const dailyData = new Map<string, { sum: number; count: number }>();
-
-    for (const m of measurements) {
-      let timestamp = '';
-      if (m.period?.datetimeFrom?.utc) {
-        timestamp = m.period.datetimeFrom.utc;
-      } else if (m.datetime?.utc) {
-        timestamp = m.datetime.utc;
-      }
-      
-      if (!timestamp || typeof m.value !== 'number') continue;
-
-      const date = new Date(timestamp).toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric' 
-      });
-
-      if (!dailyData.has(date)) {
-        dailyData.set(date, { sum: 0, count: 0 });
-      }
-
-      const current = dailyData.get(date)!;
-      current.sum += m.value;
-      current.count += 1;
-    }
-
-    // 計算每日平均 AQI
-    const historicalData: HistoricalDataPoint[] = Array.from(dailyData.entries())
-      .map(([date, { sum, count }]) => {
-        const avgValue = sum / count;
-        const aqi = calculateAQI(targetParam!.parameter, avgValue);
-        return { date, aqi: Math.round(aqi) };
-      });
-
-    // 按日期排序
-    historicalData.sort((a, b) => {
-      const dateA = new Date(a.date + ', 2025');
-      const dateB = new Date(b.date + ', 2025');
-      return dateA.getTime() - dateB.getTime();
-    });
-
-    console.log(`Processed ${historicalData.length} days of historical data`);
-    return historicalData;
   } catch (error) {
-    console.error('Error fetching historical data:', error);
+    console.error('Error in getHistoricalData:', error);
     return [];
   }
 };
