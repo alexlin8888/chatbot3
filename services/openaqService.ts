@@ -110,59 +110,69 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * c;
 };
 
-// 🎯 從時間字符串中提取 Date 對象
+// 🎯 修正：更穩健的時間提取
 const extractTimestamp = (measurement: any): Date | null => {
-  const timeFields = [
-    'datetime.utc',
-    'period.datetimeTo.utc', 
-    'period.datetimeFrom.utc'
+  // 嘗試多個可能的時間字段
+  const tryFields = [
+    measurement.datetime?.utc,
+    measurement.period?.datetimeTo?.utc,
+    measurement.period?.datetimeFrom?.utc,
   ];
   
-  for (const field of timeFields) {
-    const parts = field.split('.');
-    let value = measurement;
-    for (const part of parts) {
-      value = value?.[part];
-      if (!value) break;
-    }
-    if (value) {
-      const date = new Date(value);
+  for (const field of tryFields) {
+    if (field) {
+      const date = new Date(field);
       if (!isNaN(date.getTime())) {
         return date;
       }
     }
   }
+  
   return null;
 };
 
-// 🎯 批次對齊：找出接近參考時間的數據
+// 🎯 修正：批次對齊邏輯
 const pickBatchNear = (
   measurements: any[], 
   referenceTime: Date, 
   toleranceMinutes: number = 5
 ): any[] => {
-  if (!measurements || measurements.length === 0) return [];
+  if (!measurements || measurements.length === 0) {
+    console.log('pickBatchNear: No measurements provided');
+    return [];
+  }
   
   const toleranceMs = toleranceMinutes * 60 * 1000;
   const refTime = referenceTime.getTime();
   
-  // 過濾出時間容忍範圍內的數據
-  const nearbyMeasurements = measurements.map(m => {
+  console.log(`pickBatchNear: Looking for data within ±${toleranceMinutes} min of ${referenceTime.toISOString()}`);
+  
+  // 添加時間戳和時間差到每個測量
+  const measurementsWithTime = measurements.map(m => {
     const timestamp = extractTimestamp(m);
-    if (!timestamp) return null;
+    if (!timestamp) {
+      console.log('No valid timestamp for measurement:', m.parameter?.name);
+      return null;
+    }
     
     const timeDiff = Math.abs(timestamp.getTime() - refTime);
-    if (timeDiff <= toleranceMs) {
-      return { ...m, _timestamp: timestamp, _timeDiff: timeDiff };
-    }
-    return null;
-  }).filter(m => m !== null);
+    
+    console.log(`  - ${m.parameter?.name}: ${timestamp.toISOString()}, diff: ${Math.round(timeDiff/1000/60)} min`);
+    
+    return {
+      ...m,
+      _timestamp: timestamp,
+      _timeDiff: timeDiff
+    };
+  }).filter(m => m !== null && m._timeDiff <= toleranceMs);
   
-  if (nearbyMeasurements.length === 0) return [];
+  console.log(`Found ${measurementsWithTime.length} measurements within tolerance`);
   
-  // 按參數分組，每個參數只取最接近的一筆
+  if (measurementsWithTime.length === 0) return [];
+  
+  // 每個參數只保留最接近的一筆
   const paramMap = new Map();
-  nearbyMeasurements.forEach(m => {
+  measurementsWithTime.forEach(m => {
     const paramName = m.parameter?.name?.toLowerCase().replace(/[._\s]/g, '') || '';
     if (!paramName) return;
     
@@ -172,7 +182,10 @@ const pickBatchNear = (
     }
   });
   
-  return Array.from(paramMap.values());
+  const result = Array.from(paramMap.values());
+  console.log(`After dedup: ${result.length} unique parameters`);
+  
+  return result;
 };
 
 export const getNearbyLocations = async (
@@ -208,7 +221,6 @@ export const getNearbyLocations = async (
   }
 };
 
-// 🎯 重新實現：參考 Python 腳本的批次對齊邏輯
 export const getLatestMeasurements = async (
   latitude: number,
   longitude: number
@@ -223,12 +235,10 @@ export const getLatestMeasurements = async (
       return null;
     }
 
-    // 嘗試多個最近的監測站
     for (const location of locations.slice(0, 3)) {
       try {
         console.log(`Trying location: ${location.name}, ID: ${location.id}`);
         
-        // Step 1: 獲取該站點所有參數的最新值列表
         const data = await makeProxyRequest(`locations/${location.id}/latest`, {
           limit: 1000
         });
@@ -240,7 +250,7 @@ export const getLatestMeasurements = async (
 
         console.log(`Found ${data.results.length} measurements from /locations/${location.id}/latest`);
         
-        // Step 2: 找出「批次時間」- 使用最大時間戳
+        // 找出批次參考時間
         let maxTimestamp: Date | null = null;
         data.results.forEach((m: any) => {
           const ts = extractTimestamp(m);
@@ -256,10 +266,9 @@ export const getLatestMeasurements = async (
         
         console.log(`Batch reference time: ${maxTimestamp.toISOString()}`);
         
-        // Step 3: 批次對齊 - 找出接近批次時間的數據（±5分鐘）
+        // 批次對齊
         let batchData = pickBatchNear(data.results, maxTimestamp, 5);
         
-        // 如果找不到，放寬到 ±60 分鐘
         if (batchData.length === 0) {
           console.log('No data within 5 minutes, trying 60 minutes tolerance');
           batchData = pickBatchNear(data.results, maxTimestamp, 60);
@@ -273,7 +282,7 @@ export const getLatestMeasurements = async (
         console.log(`Found ${batchData.length} batch-aligned measurements:`, 
           batchData.map(m => m.parameter?.name).join(', '));
         
-        // Step 4: 優先選擇 PM2.5
+        // 優先選擇 PM2.5
         const pm25Data = batchData.find(m => {
           const param = m.parameter?.name?.toLowerCase().replace(/[._\s]/g, '');
           return param === 'pm25';
@@ -286,9 +295,9 @@ export const getLatestMeasurements = async (
           continue;
         }
 
-        const timestamp = extractTimestamp(targetData);
+        const timestamp = targetData._timestamp || extractTimestamp(targetData);
         
-        console.log('Selected measurement:', {
+        console.log('✅ Selected measurement:', {
           location: location.name,
           parameter: targetData.parameter.name,
           value: targetData.value,
@@ -318,7 +327,7 @@ export const getLatestMeasurements = async (
   }
 };
 
-// 🎯 獲取歷史數據
+// 🎯 修正：歷史數據使用簡化方法
 export const getHistoricalData = async (
   latitude: number,
   longitude: number
@@ -332,65 +341,72 @@ export const getHistoricalData = async (
     }
 
     const location = locations[0];
-    console.log(`Fetching historical data for location: ${location.name}`);
+    console.log(`Fetching historical data for location: ${location.name} (${location.id})`);
 
+    // 🎯 改用 /parameters/{id}/measurements 方式
+    // PM2.5 的參數 ID 是 2
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 30);
 
-    // 使用 /locations/{id}/measurements 並指定 PM2.5
-    const data = await makeProxyRequest(`locations/${location.id}/measurements`, {
-      parameter: 'pm25',
-      limit: 1000,
-      date_from: startDate.toISOString(),
-      date_to: endDate.toISOString()
-    });
-    
-    const measurements = data.results || [];
-
-    if (measurements.length === 0) {
-      console.warn('No historical measurements found');
-      return [];
-    }
-
-    console.log(`Found ${measurements.length} historical measurements`);
-
-    // 按日期分組並計算每日平均
-    const dailyData = new Map<string, { sum: number; count: number }>();
-
-    measurements.forEach((m: any) => {
-      const timestamp = extractTimestamp(m);
-      if (!timestamp || typeof m.value !== 'number') return;
-
-      const date = timestamp.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric' 
+    try {
+      const data = await makeProxyRequest(`parameters/2/measurements`, {
+        locationId: location.id,
+        limit: 1000,
+        date_from: startDate.toISOString(),
+        date_to: endDate.toISOString()
       });
+      
+      const measurements = data.results || [];
 
-      if (!dailyData.has(date)) {
-        dailyData.set(date, { sum: 0, count: 0 });
+      if (measurements.length === 0) {
+        console.warn('No historical measurements found');
+        return [];
       }
 
-      const current = dailyData.get(date)!;
-      current.sum += m.value;
-      current.count += 1;
-    });
+      console.log(`Found ${measurements.length} historical measurements`);
 
-    const historicalData: HistoricalDataPoint[] = Array.from(dailyData.entries())
-      .map(([date, { sum, count }]) => {
-        const avgValue = sum / count;
-        const aqi = calculateAQI('pm25', avgValue);
-        return { date, aqi };
+      // 按日期分組並計算每日平均
+      const dailyData = new Map<string, { sum: number; count: number }>();
+
+      measurements.forEach((m: any) => {
+        const timestamp = extractTimestamp(m);
+        if (!timestamp || typeof m.value !== 'number') return;
+
+        const date = timestamp.toLocaleDateString('en-US', { 
+          month: 'short', 
+          day: 'numeric' 
+        });
+
+        if (!dailyData.has(date)) {
+          dailyData.set(date, { sum: 0, count: 0 });
+        }
+
+        const current = dailyData.get(date)!;
+        current.sum += m.value;
+        current.count += 1;
       });
 
-    historicalData.sort((a, b) => {
-      const dateA = new Date(a.date + ', 2025');
-      const dateB = new Date(b.date + ', 2025');
-      return dateA.getTime() - dateB.getTime();
-    });
+      const historicalData: HistoricalDataPoint[] = Array.from(dailyData.entries())
+        .map(([date, { sum, count }]) => {
+          const avgValue = sum / count;
+          const aqi = calculateAQI('pm25', avgValue);
+          return { date, aqi };
+        });
 
-    console.log(`Processed ${historicalData.length} days of historical data`);
-    return historicalData;
+      historicalData.sort((a, b) => {
+        const dateA = new Date(a.date + ', 2025');
+        const dateB = new Date(b.date + ', 2025');
+        return dateA.getTime() - dateB.getTime();
+      });
+
+      console.log(`✅ Processed ${historicalData.length} days of historical data`);
+      return historicalData;
+    } catch (error) {
+      console.error('Failed to fetch via parameters endpoint:', error);
+      // 返回空數組而不是拋出錯誤
+      return [];
+    }
   } catch (error) {
     console.error('Error fetching historical data:', error);
     return [];
