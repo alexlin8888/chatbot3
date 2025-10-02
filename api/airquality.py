@@ -9,66 +9,8 @@ API_KEY = "98765df2082f04dc9449e305bc736e93624b66e250fa9dfabcca53b31fc11647"
 headers = {"X-API-Key": API_KEY}
 BASE = "https://api.openaq.org/v3"
 
-TARGET_PARAMS = ["co", "no2", "o3", "pm10", "pm25", "so2"]
-PARAM_IDS = {"co": 8, "no2": 7, "o3": 10, "pm10": 1, "pm25": 2, "so2": 9}
-
-TOL_MINUTES_PRIMARY = 5
-TOL_MINUTES_FALLBACK = 60
-
-
-def calculate_nowcast(hourly_values):
-    """
-    計算 NowCast（EPA 官方算法）
-    
-    hourly_values: 最近12小時的濃度列表，從舊到新排序
-    返回: NowCast 值
-    
-    參考: https://forum.airnowtech.org/t/the-nowcast-for-pm2-5-and-pm10/172
-    """
-    if not hourly_values or len(hourly_values) < 2:
-        return hourly_values[-1] if hourly_values else None
-    
-    # 只使用最近 12 小時
-    values = hourly_values[-12:]
-    
-    # 移除 None 值
-    values = [v for v in values if v is not None]
-    if len(values) < 2:
-        return values[-1] if values else None
-    
-    # 計算 min 和 max
-    max_val = max(values)
-    min_val = min(values)
-    
-    # 計算權重因子 w
-    if max_val > 0:
-        w = 1.0 - (max_val - min_val) / max_val
-        w = max(0.5, w)  # w 最小值為 0.5
-    else:
-        w = 0.5
-    
-    # 計算加權平均（從最新往前算）
-    weighted_sum = 0.0
-    weight_sum = 0.0
-    
-    for i, value in enumerate(reversed(values)):
-        weight = w ** i
-        weighted_sum += value * weight
-        weight_sum += weight
-    
-    nowcast = weighted_sum / weight_sum if weight_sum > 0 else values[-1]
-    
-    print(f"  NowCast計算: 使用 {len(values)} 小時數據")
-    print(f"  範圍: {min_val:.1f} - {max_val:.1f}, 權重因子: {w:.3f}")
-    print(f"  即時值: {values[-1]:.1f} → NowCast: {nowcast:.1f}")
-    
-    return nowcast
-
-
 def calculate_aqi(parameter: str, value: float) -> int:
-    """
-    根據污染物濃度計算 AQI（使用 2024 年 5 月 EPA 最新標準）
-    """
+    """根據污染物濃度計算 AQI（使用 2024 年 5 月 EPA 最新標準）"""
     if value is None:
         return 0
     
@@ -90,82 +32,6 @@ def calculate_aqi(parameter: str, value: float) -> int:
             return calc_aqi(value, 125.5, 225.4, 201, 300)
         elif value <= 325.4:
             return calc_aqi(value, 225.5, 325.4, 301, 500)
-        else:
-            return 500
-    
-    elif param == "pm10":
-        if value <= 54:
-            return calc_aqi(value, 0, 54, 0, 50)
-        elif value <= 154:
-            return calc_aqi(value, 55, 154, 51, 100)
-        elif value <= 254:
-            return calc_aqi(value, 155, 254, 101, 150)
-        elif value <= 354:
-            return calc_aqi(value, 255, 354, 151, 200)
-        elif value <= 424:
-            return calc_aqi(value, 355, 424, 201, 300)
-        elif value <= 604:
-            return calc_aqi(value, 425, 604, 301, 500)
-        else:
-            return 500
-    
-    elif param == "o3":
-        if value <= 0.054:
-            return calc_aqi(value, 0, 0.054, 0, 50)
-        elif value <= 0.070:
-            return calc_aqi(value, 0.055, 0.070, 51, 100)
-        elif value <= 0.085:
-            return calc_aqi(value, 0.071, 0.085, 101, 150)
-        elif value <= 0.105:
-            return calc_aqi(value, 0.086, 0.105, 151, 200)
-        elif value <= 0.200:
-            return calc_aqi(value, 0.106, 0.200, 201, 300)
-        else:
-            return 301
-    
-    elif param == "no2":
-        no2_ppb = value * 1000
-        if no2_ppb <= 53:
-            return calc_aqi(no2_ppb, 0, 53, 0, 50)
-        elif no2_ppb <= 100:
-            return calc_aqi(no2_ppb, 54, 100, 51, 100)
-        elif no2_ppb <= 360:
-            return calc_aqi(no2_ppb, 101, 360, 101, 150)
-        elif no2_ppb <= 649:
-            return calc_aqi(no2_ppb, 361, 649, 151, 200)
-        elif no2_ppb <= 1249:
-            return calc_aqi(no2_ppb, 650, 1249, 201, 300)
-        elif no2_ppb <= 2049:
-            return calc_aqi(no2_ppb, 1250, 2049, 301, 500)
-        else:
-            return 500
-    
-    elif param == "so2":
-        so2_ppb = value * 1000
-        if so2_ppb <= 35:
-            return calc_aqi(so2_ppb, 0, 35, 0, 50)
-        elif so2_ppb <= 75:
-            return calc_aqi(so2_ppb, 36, 75, 51, 100)
-        elif so2_ppb <= 185:
-            return calc_aqi(so2_ppb, 76, 185, 101, 150)
-        elif so2_ppb <= 304:
-            return calc_aqi(so2_ppb, 186, 304, 151, 200)
-        else:
-            return 200
-    
-    elif param == "co":
-        if value <= 4.4:
-            return calc_aqi(value, 0, 4.4, 0, 50)
-        elif value <= 9.4:
-            return calc_aqi(value, 4.5, 9.4, 51, 100)
-        elif value <= 12.4:
-            return calc_aqi(value, 9.5, 12.4, 101, 150)
-        elif value <= 15.4:
-            return calc_aqi(value, 12.5, 15.4, 151, 200)
-        elif value <= 30.4:
-            return calc_aqi(value, 15.5, 30.4, 201, 300)
-        elif value <= 50.4:
-            return calc_aqi(value, 30.5, 50.4, 301, 500)
         else:
             return 500
     
@@ -205,6 +71,21 @@ def get_nearby_locations(lat: float, lon: float, radius: int = 25000):
     except Exception as e:
         print(f"Error fetching locations: {e}")
         return []
+
+
+def get_location_latest_with_sensors(location_id: int):
+    """獲取站點資訊（包含 sensors）"""
+    try:
+        r = requests.get(
+            f"{BASE}/locations/{location_id}",
+            headers=headers,
+            timeout=10
+        )
+        r.raise_for_status()
+        return r.json().get("results", [None])[0]
+    except Exception as e:
+        print(f"Error fetching location info: {e}")
+        return None
 
 
 def get_sensor_hourly_data(sensor_id: int, hours: int = 12):
@@ -272,25 +153,42 @@ def get_sensor_hourly_data(sensor_id: int, hours: int = 12):
         return []
 
 
-def get_location_latest_with_sensors(location_id: int):
-    """獲取站點資訊（包含 sensors）"""
-    try:
-        r = requests.get(
-            f"{BASE}/locations/{location_id}",
-            headers=headers,
-            timeout=10
-        )
-        r.raise_for_status()
-        return r.json().get("results", [None])[0]
-    except Exception as e:
-        print(f"Error fetching location info: {e}")
-        return None
+def calculate_nowcast(hourly_values):
+    """計算 NowCast（EPA 官方算法）"""
+    if not hourly_values or len(hourly_values) < 2:
+        return hourly_values[-1] if hourly_values else None
+    
+    values = hourly_values[-12:]
+    values = [v for v in values if v is not None]
+    if len(values) < 2:
+        return values[-1] if values else None
+    
+    max_val = max(values)
+    min_val = min(values)
+    
+    if max_val > 0:
+        w = 1.0 - (max_val - min_val) / max_val
+        w = max(0.5, w)
+    else:
+        w = 0.5
+    
+    weighted_sum = 0.0
+    weight_sum = 0.0
+    
+    for i, value in enumerate(reversed(values)):
+        weight = w ** i
+        weighted_sum += value * weight
+        weight_sum += weight
+    
+    nowcast = weighted_sum / weight_sum if weight_sum > 0 else values[-1]
+    
+    return nowcast
 
 
-def get_latest_air_quality(lat: float, lon: float):
-    """獲取最新空氣品質數據（使用 NowCast）"""
+def get_latest_air_quality_detailed(lat: float, lon: float):
+    """獲取最新空氣品質數據（包含詳細除錯資訊）"""
     try:
-        print(f"\n=== Fetching air quality with NowCast for ({lat:.4f}, {lon:.4f}) ===")
+        print(f"\n=== Fetching air quality with detailed info for ({lat:.4f}, {lon:.4f}) ===")
         
         # 1. 獲取附近站點
         locations = get_nearby_locations(lat, lon)
@@ -303,7 +201,7 @@ def get_latest_air_quality(lat: float, lon: float):
 
         print(f"Using location: {location_name} (ID: {location_id})")
 
-        # 2. 獲取站點詳細資訊（包含 sensors）
+        # 2. 獲取站點詳細資訊
         location_detail = get_location_latest_with_sensors(location_id)
         if not location_detail or not location_detail.get("sensors"):
             return {"error": "No sensors found for this location"}
@@ -323,41 +221,56 @@ def get_latest_air_quality(lat: float, lon: float):
             return {"error": "No PM2.5 sensor found"}
 
         sensor_id = pm25_sensor["id"]
+        
+        # 🎯 獲取即時值（從 sensor 的 latest 欄位）
+        instant_value = pm25_sensor.get("latest", {}).get("value")
+        latest_time = pm25_sensor.get("latest", {}).get("datetime", {}).get("utc")
+        
+        if instant_value is None:
+            return {"error": "No instant value available"}
+        
+        instant_value = float(instant_value)
+        
         print(f"Using PM2.5 sensor ID: {sensor_id}")
+        print(f"📈 Instant value: {instant_value:.1f} µg/m³")
 
         # 4. 獲取過去 12 小時的數據
         print(f"Fetching 12-hour data for NowCast...")
         hourly_values = get_sensor_hourly_data(sensor_id, hours=12)
         
-        if not hourly_values:
-            return {"error": "No historical data available for NowCast"}
+        # 5. 計算統計數據
+        if hourly_values and len(hourly_values) > 0:
+            avg_value = sum(hourly_values) / len(hourly_values)
+            min_value = min(hourly_values)
+            max_value = max(hourly_values)
+            
+            # 計算 NowCast
+            nowcast_value = calculate_nowcast(hourly_values)
+            
+            print(f"📊 12-hour statistics:")
+            print(f"   Data points: {len(hourly_values)}")
+            print(f"   Average: {avg_value:.1f} µg/m³")
+            print(f"   Min: {min_value:.1f} µg/m³")
+            print(f"   Max: {max_value:.1f} µg/m³")
+            print(f"   NowCast: {nowcast_value:.1f} µg/m³")
+        else:
+            nowcast_value = instant_value
+            avg_value = instant_value
+            min_value = instant_value
+            max_value = instant_value
+            hourly_values = [instant_value]
 
-        print(f"Got {len(hourly_values)} hours of data")
-
-        # 5. 計算 NowCast
-        nowcast_value = calculate_nowcast(hourly_values)
+        # 6. 計算 AQI
+        instant_aqi = calculate_aqi("pm25", instant_value)
+        nowcast_aqi = calculate_aqi("pm25", nowcast_value)
+        avg_aqi = calculate_aqi("pm25", avg_value)
         
-        if nowcast_value is None:
-            return {"error": "Failed to calculate NowCast"}
+        print(f"\n✅ Results:")
+        print(f"   Instant: {instant_value:.1f} µg/m³ → AQI {instant_aqi}")
+        print(f"   NowCast: {nowcast_value:.1f} µg/m³ → AQI {nowcast_aqi}")
+        print(f"   12h Avg: {avg_value:.1f} µg/m³ → AQI {avg_aqi}")
 
-        # 6. 用 NowCast 值計算 AQI
-        aqi = calculate_aqi("pm25", nowcast_value)
-        
-        print(f"\n✅ Final NowCast AQI: {aqi}")
-        print(f"   NowCast PM2.5: {nowcast_value:.1f} µg/m³")
-        print(f"   Instant PM2.5: {hourly_values[-1]:.1f} µg/m³ (for reference)")
-
-        # 7. 獲取其他污染物的即時值（可選）
-        measurements = [{
-            "parameter": "pm25",
-            "value": float(nowcast_value),
-            "instant_value": float(hourly_values[-1]),
-            "units": "µg/m³",
-            "aqi": aqi,
-            "method": "NowCast (12-hour weighted average)",
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }]
-
+        # 7. 返回詳細結果
         return {
             "success": True,
             "location": {
@@ -366,13 +279,59 @@ def get_latest_air_quality(lat: float, lon: float):
                 "latitude": location["coordinates"]["latitude"],
                 "longitude": location["coordinates"]["longitude"]
             },
-            "aqi": aqi,
+            # 主要數值（使用 NowCast）
+            "aqi": nowcast_aqi,
             "pollutant": "PM25",
             "concentration": float(nowcast_value),
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "measurements": measurements,
+            "timestamp": latest_time or datetime.utcnow().isoformat() + "Z",
+            
+            # 🎯 詳細數據
+            "detailed": {
+                "instant": {
+                    "value": float(instant_value),
+                    "aqi": instant_aqi,
+                    "timestamp": latest_time
+                },
+                "nowcast": {
+                    "value": float(nowcast_value),
+                    "aqi": nowcast_aqi
+                },
+                "statistics_12h": {
+                    "average": {
+                        "value": float(avg_value),
+                        "aqi": avg_aqi
+                    },
+                    "min": float(min_value),
+                    "max": float(max_value),
+                    "data_points": len(hourly_values),
+                    "all_values": [float(v) for v in hourly_values]  # 所有數據點
+                },
+                "difference": {
+                    "instant_vs_nowcast": {
+                        "value": float(abs(instant_value - nowcast_value)),
+                        "percentage": float(abs(instant_value - nowcast_value) / instant_value * 100),
+                        "aqi": abs(instant_aqi - nowcast_aqi)
+                    },
+                    "instant_vs_average": {
+                        "value": float(abs(instant_value - avg_value)),
+                        "percentage": float(abs(instant_value - avg_value) / instant_value * 100),
+                        "aqi": abs(instant_aqi - avg_aqi)
+                    }
+                }
+            },
+            
+            # 保持原有格式
+            "measurements": [{
+                "parameter": "pm25",
+                "value": float(nowcast_value),
+                "instant_value": float(instant_value),
+                "units": "µg/m³",
+                "aqi": nowcast_aqi,
+                "method": "NowCast (12-hour weighted average)",
+                "timestamp": latest_time or datetime.utcnow().isoformat() + "Z"
+            }],
             "standard": "EPA 2024 with NowCast",
-            "note": "NowCast uses 12-hour weighted average, matching AirNow.gov methodology"
+            "note": "NowCast uses 12-hour weighted average. See 'detailed' field for complete breakdown."
         }
 
     except Exception as e:
@@ -401,7 +360,7 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Missing lat/lon parameters"}).encode())
                 return
             
-            result = get_latest_air_quality(lat, lon)
+            result = get_latest_air_quality_detailed(lat, lon)
             
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
