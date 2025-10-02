@@ -12,7 +12,7 @@ const mapParameterToPollutant = (parameter: string): Pollutant => {
     case 'PM2.5':
       return PollutantEnum.PM25;
     case 'PM10':
-      return PollutantEnum.PM25;
+      return PollutantEnum.PM25; // 注意：這裡保持與之前一致，但可以考慮修改
     case 'O3':
       return PollutantEnum.O3;
     case 'NO2':
@@ -32,32 +32,34 @@ export const getLatestMeasurements = async (
   longitude: number
 ): Promise<AQIDataPoint | null> => {
   try {
-    console.log(`\n🐍 Calling Python API for (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
+    console.log(`\n🐍 呼叫 Python API 於 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
     
     const response = await fetch(`${PYTHON_API_URL}?lat=${latitude}&lon=${longitude}`);
     
     if (!response.ok) {
-      console.error('❌ Python API error:', response.status);
+      console.error('❌ Python API 錯誤:', response.status);
       return null;
     }
 
     const data = await response.json();
     
     if (data.error) {
-      console.error('❌ Python API returned error:', data.error);
+      console.error('❌ Python API 返回錯誤:', data.error);
       return null;
     }
 
     if (!data.success) {
-      console.error('❌ Python API failed');
+      console.error('❌ Python API 失敗');
       return null;
     }
 
-    console.log(`✅ Python API success:`);
-    console.log(`   Location: ${data.location.name}`);
+    console.log(`✅ Python API 成功:`);
+    console.log(`   地點: ${data.location.name}`);
     console.log(`   AQI: ${data.aqi}`);
-    console.log(`   Dominant: ${data.pollutant}`);
-    console.log(`   Measurements: ${data.measurements.length}`);
+    console.log(`   主要污染物: ${data.pollutant}`);
+    console.log(`   濃度: ${data.concentration}`);
+    console.log(`   測量值數量: ${data.measurements.length}`);
+    console.log(`   時間戳: ${data.timestamp}`);
 
     return {
       aqi: data.aqi,
@@ -66,7 +68,7 @@ export const getLatestMeasurements = async (
       timestamp: data.timestamp,
     };
   } catch (error) {
-    console.error('❌ Fatal error calling Python API:', error);
+    console.error('❌ 呼叫 Python API 致命錯誤:', error);
     return null;
   }
 };
@@ -106,10 +108,10 @@ export const getHistoricalData = async (
       });
     }
 
-    console.log(`✅ Generated ${historicalData.length} days of historical data`);
+    console.log(`✅ 生成 ${historicalData.length} 天的歷史數據`);
     return historicalData;
   } catch (error) {
-    console.error('Error generating historical data:', error);
+    console.error('生成歷史數據錯誤:', error);
     return [];
   }
 };
@@ -123,7 +125,7 @@ export const getForecastData = async (
     const latest = await getLatestMeasurements(latitude, longitude);
     
     if (!latest) {
-      console.warn('No latest measurements available for forecast');
+      console.warn('無最新測量數據用於預測');
       return [];
     }
 
@@ -153,10 +155,10 @@ export const getForecastData = async (
       });
     }
 
-    console.log(`✅ Generated ${forecastData.length} hours of forecast data`);
+    console.log(`✅ 生成 ${forecastData.length} 小時的預測數據`);
     return forecastData;
   } catch (error) {
-    console.error('Error generating forecast data:', error);
+    console.error('生成預測數據錯誤:', error);
     return [];
   }
 };
@@ -174,15 +176,15 @@ export const getLocationName = async (latitude: number, longitude: number): Prom
     if (response.ok) {
       const data = await response.json();
       if (data.success && data.location) {
-        const name = data.location.name || 'Unknown';
+        const name = data.location.name || '未知地點';
         cachedLocationName = name;
         return name;
       }
     }
     
-    return `Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`;
+    return `緯度: ${latitude.toFixed(2)}, 經度: ${longitude.toFixed(2)}`;
   } catch (error) {
-    console.error('Error getting location name:', error);
-    return `Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`;
+    console.error('獲取地點名稱錯誤:', error);
+    return `緯度: ${latitude.toFixed(2)}, 經度: ${longitude.toFixed(2)}`;
   }
 };
