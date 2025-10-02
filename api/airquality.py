@@ -17,70 +17,118 @@ TOL_MINUTES_FALLBACK = 60
 
 
 def calculate_aqi(parameter: str, value: float) -> int:
-    """根據污染物濃度計算 AQI"""
+    """
+    根據污染物濃度計算 AQI（使用 2024 年 5 月 EPA 最新標準）
+    
+    參考: https://aqs.epa.gov/aqsweb/documents/codetables/aqi_breakpoints.html
+    """
     param = parameter.lower()
     
+    # AQI 計算公式
+    def calc_aqi(c, c_low, c_high, i_low, i_high):
+        return round(((i_high - i_low) / (c_high - c_low)) * (c - c_low) + i_low)
+    
     if param == "pm25":
-        if value <= 12:
-            return round((50 / 12) * value)
+        # PM2.5 (µg/m³) - 2024年5月更新的標準
+        if value <= 9.0:
+            return calc_aqi(value, 0, 9.0, 0, 50)
         elif value <= 35.4:
-            return round(((100 - 51) / (35.4 - 12.1)) * (value - 12.1) + 51)
+            return calc_aqi(value, 9.1, 35.4, 51, 100)
         elif value <= 55.4:
-            return round(((150 - 101) / (55.4 - 35.5)) * (value - 35.5) + 101)
-        elif value <= 150.4:
-            return round(((200 - 151) / (150.4 - 55.5)) * (value - 55.5) + 151)
-        elif value <= 250.4:
-            return round(((300 - 201) / (250.4 - 150.5)) * (value - 150.5) + 201)
+            return calc_aqi(value, 35.5, 55.4, 101, 150)
+        elif value <= 125.4:
+            return calc_aqi(value, 55.5, 125.4, 151, 200)
+        elif value <= 225.4:
+            return calc_aqi(value, 125.5, 225.4, 201, 300)
+        elif value <= 325.4:
+            return calc_aqi(value, 225.5, 325.4, 301, 500)
         else:
-            return round(((500 - 301) / (500.4 - 250.5)) * (value - 250.5) + 301)
+            return 500
     
     elif param == "pm10":
+        # PM10 (µg/m³) - 24小時平均
         if value <= 54:
-            return round((50 / 54) * value)
+            return calc_aqi(value, 0, 54, 0, 50)
         elif value <= 154:
-            return round(((100 - 51) / (154 - 55)) * (value - 55) + 51)
+            return calc_aqi(value, 55, 154, 51, 100)
         elif value <= 254:
-            return round(((150 - 101) / (254 - 155)) * (value - 155) + 101)
+            return calc_aqi(value, 155, 254, 101, 150)
         elif value <= 354:
-            return round(((200 - 151) / (354 - 255)) * (value - 255) + 151)
+            return calc_aqi(value, 255, 354, 151, 200)
+        elif value <= 424:
+            return calc_aqi(value, 355, 424, 201, 300)
+        elif value <= 604:
+            return calc_aqi(value, 425, 604, 301, 500)
         else:
-            return min(round(((300 - 201) / (424 - 355)) * (value - 355) + 201), 300)
+            return 500
     
     elif param == "o3":
-        o3_ppm = value / 1000
-        if o3_ppm <= 0.054:
-            return round((50 / 0.054) * o3_ppm)
-        elif o3_ppm <= 0.070:
-            return round(((100 - 51) / (0.070 - 0.055)) * (o3_ppm - 0.055) + 51)
+        # O3 (ppm) - 8小時平均
+        if value <= 0.054:
+            return calc_aqi(value, 0, 0.054, 0, 50)
+        elif value <= 0.070:
+            return calc_aqi(value, 0.055, 0.070, 51, 100)
+        elif value <= 0.085:
+            return calc_aqi(value, 0.071, 0.085, 101, 150)
+        elif value <= 0.105:
+            return calc_aqi(value, 0.086, 0.105, 151, 200)
+        elif value <= 0.200:
+            return calc_aqi(value, 0.106, 0.200, 201, 300)
         else:
-            return min(round(((150 - 101) / (0.085 - 0.071)) * (o3_ppm - 0.071) + 101), 200)
+            return 301
     
     elif param == "no2":
+        # NO2 (ppb) - 1小時平均
+        # OpenAQ 以 ppm 為單位，需要轉換為 ppb (1 ppm = 1000 ppb)
         no2_ppb = value * 1000
         if no2_ppb <= 53:
-            return round((50 / 53) * no2_ppb)
+            return calc_aqi(no2_ppb, 0, 53, 0, 50)
         elif no2_ppb <= 100:
-            return round(((100 - 51) / (100 - 54)) * (no2_ppb - 54) + 51)
+            return calc_aqi(no2_ppb, 54, 100, 51, 100)
+        elif no2_ppb <= 360:
+            return calc_aqi(no2_ppb, 101, 360, 101, 150)
+        elif no2_ppb <= 649:
+            return calc_aqi(no2_ppb, 361, 649, 151, 200)
+        elif no2_ppb <= 1249:
+            return calc_aqi(no2_ppb, 650, 1249, 201, 300)
+        elif no2_ppb <= 2049:
+            return calc_aqi(no2_ppb, 1250, 2049, 301, 500)
         else:
-            return min(round(((150 - 101) / (360 - 101)) * (no2_ppb - 101) + 101), 200)
+            return 500
     
     elif param == "so2":
+        # SO2 (ppb) - 1小時平均
+        # OpenAQ 以 ppm 為單位，需要轉換為 ppb
         so2_ppb = value * 1000
         if so2_ppb <= 35:
-            return round((50 / 35) * so2_ppb)
+            return calc_aqi(so2_ppb, 0, 35, 0, 50)
         elif so2_ppb <= 75:
-            return round(((100 - 51) / (75 - 36)) * (so2_ppb - 36) + 51)
+            return calc_aqi(so2_ppb, 36, 75, 51, 100)
+        elif so2_ppb <= 185:
+            return calc_aqi(so2_ppb, 76, 185, 101, 150)
+        elif so2_ppb <= 304:
+            return calc_aqi(so2_ppb, 186, 304, 151, 200)
         else:
-            return min(round(((150 - 101) / (185 - 76)) * (so2_ppb - 76) + 101), 200)
+            return 200
     
     elif param == "co":
+        # CO (ppm) - 8小時平均
         if value <= 4.4:
-            return round((50 / 4.4) * value)
+            return calc_aqi(value, 0, 4.4, 0, 50)
         elif value <= 9.4:
-            return round(((100 - 51) / (9.4 - 4.5)) * (value - 4.5) + 51)
+            return calc_aqi(value, 4.5, 9.4, 51, 100)
+        elif value <= 12.4:
+            return calc_aqi(value, 9.5, 12.4, 101, 150)
+        elif value <= 15.4:
+            return calc_aqi(value, 12.5, 15.4, 151, 200)
+        elif value <= 30.4:
+            return calc_aqi(value, 15.5, 30.4, 201, 300)
+        elif value <= 50.4:
+            return calc_aqi(value, 30.5, 50.4, 301, 500)
         else:
-            return min(round(((150 - 101) / (12.4 - 9.5)) * (value - 9.5) + 101), 200)
+            return 500
     
+    # 未知參數的後備計算
     return min(round(value * 2), 300)
 
 
@@ -310,7 +358,7 @@ def get_latest_air_quality(lat: float, lon: float):
         df_all = df_all.drop_duplicates(subset=["parameter"], keep="first")
         df_all = df_all.drop(columns=["dt_diff"])
 
-        # 7. 計算 AQI
+        # 7. 計算 AQI（使用 2024 EPA 標準）
         max_aqi = 0
         dominant_pollutant = ""
         dominant_value = 0
@@ -330,7 +378,7 @@ def get_latest_air_quality(lat: float, lon: float):
                 "timestamp": row["ts_utc"].isoformat() if pd.notna(row["ts_utc"]) else None
             })
 
-            print(f"{param}: AQI {aqi} (from {value} {row['units']})")
+            print(f"{param}: AQI {aqi} (from {value} {row['units']}) [EPA 2024]")
 
             if aqi > max_aqi:
                 max_aqi = aqi
@@ -339,6 +387,7 @@ def get_latest_air_quality(lat: float, lon: float):
                 dominant_timestamp = row["ts_utc"].isoformat() if pd.notna(row["ts_utc"]) else None
 
         print(f"Final AQI: {max_aqi}, Dominant: {dominant_pollutant}")
+        print(f"Using EPA 2024 Standard (PM2.5 Good: 0-9.0 µg/m³)")
 
         # 8. 返回結果
         return {
@@ -353,7 +402,8 @@ def get_latest_air_quality(lat: float, lon: float):
             "pollutant": dominant_pollutant.upper(),
             "concentration": dominant_value,
             "timestamp": dominant_timestamp,
-            "measurements": measurements
+            "measurements": measurements,
+            "standard": "EPA 2024"
         }
 
     except Exception as e:
