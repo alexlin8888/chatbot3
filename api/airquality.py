@@ -313,9 +313,9 @@ def calculate_aqi(parameter: str, value: float) -> int:
 
 
 def get_comprehensive_air_quality(lat: float, lon: float):
-    """綜合空氣質量數據獲取（系統化方法）"""
+    """簡化的空氣質量數據獲取（直接使用最新值）"""
     try:
-        print(f"\n=== 獲取綜合空氣質量數據 ({lat:.4f}, {lon:.4f}) ===")
+        print(f"\n=== 獲取空氣質量數據 ({lat:.4f}, {lon:.4f}) ===")
         
         # 1. 獲取附近站點
         locations = get_nearby_locations(lat, lon)
@@ -328,99 +328,71 @@ def get_comprehensive_air_quality(lat: float, lon: float):
         
         print(f"使用站點: {location_name} (ID: {location_id})")
 
-        # 2. 獲取站點元數據
-        meta = get_location_meta(location_id)
-        if not meta:
-            return {"error": "無法獲取站點元數據"}
-            
-        print(f"最後更新時間(UTC): {meta['last_utc']}")
-
-        # 3. 獲取站點最新值清單
-        df_loc_latest = get_location_latest_df(location_id)
-        if df_loc_latest.empty:
-            return {"error": "無最新監測數據"}
-
-        # 4. 確定參考時間
-        t_star_latest = df_loc_latest["ts_utc"].max()
-        t_star_loc = meta["last_utc"]
-        
-        # 選擇更準確的時間參考
-        if pd.notna(t_star_latest) and pd.notna(t_star_loc):
-            if abs(t_star_latest - t_star_loc) > pd.Timedelta(hours=1):
-                print(f"注意：站點時間差異 > 1小時，使用最新批次時間")
-        t_star = t_star_latest if pd.notna(t_star_latest) else t_star_loc
-
-        print(f"用於對齊的批次時間(UTC): {t_star}")
-
-        # 5. 獲取對齊批次的數據
-        df_at_batch = pick_batch_near(df_loc_latest, t_star, TOL_MINUTES_PRIMARY)
-        if df_at_batch.empty:
-            df_at_batch = pick_batch_near(df_loc_latest, t_star, TOL_MINUTES_FALLBACK)
-
-        have = set(df_at_batch["parameter"].str.lower().tolist()) if not df_at_batch.empty else set()
-
-        # 6. 補充缺失參數
-        missing = [p for p in TARGET_PARAMS if p not in have]
-        if missing:
-            print(f"補充缺失參數: {missing}")
-            df_param_latest = get_parameters_latest_df(location_id, missing)
-            df_param_batch = pick_batch_near(df_param_latest, t_star, TOL_MINUTES_PRIMARY)
-            if df_param_batch.empty:
-                df_param_batch = pick_batch_near(df_param_latest, t_star, TOL_MINUTES_FALLBACK)
-        else:
-            df_param_batch = pd.DataFrame()
-
-        # 7. 合併數據
-        frames = []
-        if not df_at_batch.empty:
-            frames.append(df_at_batch)
-        if not df_param_batch.empty:
-            frames.append(df_param_batch)
-
-        if not frames:
-            return {"error": "在時間窗口內無污染物數據"}
-
-        df_all = pd.concat(frames, ignore_index=True)
-        df_all["parameter"] = df_all["parameter"].str.lower()
-        df_all = df_all[df_all["parameter"].isin(TARGET_PARAMS)]
-        
-        # 去重，取最接近的數據
-        df_all["dt_diff"] = (df_all["ts_utc"] - t_star).abs()
-        df_all = df_all.sort_values(["parameter", "dt_diff", "ts_utc"], ascending=[True, True, False])
-        df_all = df_all.drop_duplicates(subset=["parameter"], keep="first")
-
-        # 8. 計算每個污染物的 AQI 並確定主要污染物
+        # 2. 直接獲取最新測量值 - 簡化方法
         measurements = []
-        highest_aqi = 0
-        dominant_pollutant = "PM25"
-        
-        print("\n污染物數據分析:")
-        for _, row in df_all.iterrows():
-            param = row["parameter"]
-            value = row["value"]
+        try:
+            # 使用 measurements 端點直接獲取最新數據
+            r = requests.get(
+                f"{BASE}/measurements",
+                headers=headers,
+                params={
+                    "location_id": location_id,
+                    "limit": 20,
+                    "order_by": "datetime",
+                    "sort": "desc"
+                },
+                timeout=10
+            )
             
-            if value is not None:
-                aqi = calculate_aqi(param, value)
+            if r.status_code == 200:
+                results = r.json().get("results", [])
+                print(f"獲取到 {len(results)} 條原始數據")
                 
-                measurements.append({
-                    "parameter": param.upper(),
-                    "value": float(value),
-                    "units": row.get("units", "µg/m³"),
-                    "aqi": aqi,
-                    "timestamp": row["ts_utc"].isoformat() if pd.notna(row["ts_utc"]) else ""
-                })
+                # 按參數分組，取每個參數的最新值
+                param_data = {}
+                for item in results:
+                    param = item.get("parameter", "").lower()
+                    if param in TARGET_PARAMS and param not in param_data:
+                        value = item.get("value")
+                        if value is not None:
+                            param_data[param] = {
+                                "value": float(value),
+                                "units": item.get("unit"),
+                                "timestamp": item.get("date", {}).get("utc")
+                            }
+                            print(f"  {param}: {value} (原始值)")
                 
-                print(f"  {param.upper()}: {value:.2f} → AQI: {aqi}")
-                
-                # 更新最高 AQI 和主要污染物
-                if aqi > highest_aqi:
-                    highest_aqi = aqi
-                    dominant_pollutant = param.upper()
+                # 轉換為測量列表
+                for param, data in param_data.items():
+                    aqi = calculate_aqi(param, data["value"])
+                    measurements.append({
+                        "parameter": param.upper(),
+                        "value": data["value"],
+                        "units": data["units"],
+                        "aqi": aqi,
+                        "timestamp": data["timestamp"],
+                        "method": "直接最新值"
+                    })
+            else:
+                print(f"API 請求失敗: {r.status_code}")
+                return {"error": f"數據獲取失敗: {r.status_code}"}
+        
+        except Exception as e:
+            print(f"獲取直接數據失敗: {e}")
+            return {"error": f"數據獲取失敗: {str(e)}"}
 
         if not measurements:
             return {"error": "無有效的污染物測量值"}
 
-        # 獲取主要污染物的濃度
+        # 3. 計算主要污染物和AQI
+        highest_aqi = 0
+        dominant_pollutant = "PM25"
+        
+        for measurement in measurements:
+            if measurement["aqi"] > highest_aqi:
+                highest_aqi = measurement["aqi"]
+                dominant_pollutant = measurement["parameter"]
+        
         dominant_concentration = next(
             (m["value"] for m in measurements if m["parameter"] == dominant_pollutant),
             measurements[0]["value"]
@@ -428,7 +400,8 @@ def get_comprehensive_air_quality(lat: float, lon: float):
 
         print(f"\n✅ 最終 AQI: {highest_aqi}")
         print(f"   主要污染物: {dominant_pollutant}")
-        print(f"   數據點數量: {len(measurements)}")
+        print(f"   濃度: {dominant_concentration}")
+        print(f"   有效參數: {len(measurements)}/{len(TARGET_PARAMS)}")
 
         return {
             "success": True,
@@ -441,14 +414,14 @@ def get_comprehensive_air_quality(lat: float, lon: float):
             "aqi": highest_aqi,
             "pollutant": dominant_pollutant,
             "concentration": float(dominant_concentration),
-            "timestamp": t_star.isoformat() + "Z" if pd.notna(t_star) else datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
             "measurements": measurements,
             "standard": "EPA 2024",
-            "note": "綜合多污染物分析，時間對齊"
+            "note": "直接最新值計算，跳過複雜處理"
         }
-
+        
     except Exception as e:
-        print(f"綜合分析錯誤: {e}")
+        print(f"空氣質量獲取錯誤: {e}")
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
