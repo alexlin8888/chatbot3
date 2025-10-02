@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from http.server import BaseHTTPRequestHandler
 
@@ -16,20 +16,68 @@ TOL_MINUTES_PRIMARY = 5
 TOL_MINUTES_FALLBACK = 60
 
 
+def calculate_nowcast(hourly_values):
+    """
+    計算 NowCast（EPA 官方算法）
+    
+    hourly_values: 最近12小時的濃度列表，從舊到新排序
+    返回: NowCast 值
+    
+    參考: https://forum.airnowtech.org/t/the-nowcast-for-pm2-5-and-pm10/172
+    """
+    if not hourly_values or len(hourly_values) < 2:
+        return hourly_values[-1] if hourly_values else None
+    
+    # 只使用最近 12 小時
+    values = hourly_values[-12:]
+    
+    # 移除 None 值
+    values = [v for v in values if v is not None]
+    if len(values) < 2:
+        return values[-1] if values else None
+    
+    # 計算 min 和 max
+    max_val = max(values)
+    min_val = min(values)
+    
+    # 計算權重因子 w
+    if max_val > 0:
+        w = 1.0 - (max_val - min_val) / max_val
+        w = max(0.5, w)  # w 最小值為 0.5
+    else:
+        w = 0.5
+    
+    # 計算加權平均（從最新往前算）
+    weighted_sum = 0.0
+    weight_sum = 0.0
+    
+    for i, value in enumerate(reversed(values)):
+        weight = w ** i
+        weighted_sum += value * weight
+        weight_sum += weight
+    
+    nowcast = weighted_sum / weight_sum if weight_sum > 0 else values[-1]
+    
+    print(f"  NowCast計算: 使用 {len(values)} 小時數據")
+    print(f"  範圍: {min_val:.1f} - {max_val:.1f}, 權重因子: {w:.3f}")
+    print(f"  即時值: {values[-1]:.1f} → NowCast: {nowcast:.1f}")
+    
+    return nowcast
+
+
 def calculate_aqi(parameter: str, value: float) -> int:
     """
     根據污染物濃度計算 AQI（使用 2024 年 5 月 EPA 最新標準）
-    
-    參考: https://aqs.epa.gov/aqsweb/documents/codetables/aqi_breakpoints.html
     """
+    if value is None:
+        return 0
+    
     param = parameter.lower()
     
-    # AQI 計算公式
     def calc_aqi(c, c_low, c_high, i_low, i_high):
         return round(((i_high - i_low) / (c_high - c_low)) * (c - c_low) + i_low)
     
     if param == "pm25":
-        # PM2.5 (µg/m³) - 2024年5月更新的標準
         if value <= 9.0:
             return calc_aqi(value, 0, 9.0, 0, 50)
         elif value <= 35.4:
@@ -46,7 +94,6 @@ def calculate_aqi(parameter: str, value: float) -> int:
             return 500
     
     elif param == "pm10":
-        # PM10 (µg/m³) - 24小時平均
         if value <= 54:
             return calc_aqi(value, 0, 54, 0, 50)
         elif value <= 154:
@@ -63,7 +110,6 @@ def calculate_aqi(parameter: str, value: float) -> int:
             return 500
     
     elif param == "o3":
-        # O3 (ppm) - 8小時平均
         if value <= 0.054:
             return calc_aqi(value, 0, 0.054, 0, 50)
         elif value <= 0.070:
@@ -78,8 +124,6 @@ def calculate_aqi(parameter: str, value: float) -> int:
             return 301
     
     elif param == "no2":
-        # NO2 (ppb) - 1小時平均
-        # OpenAQ 以 ppm 為單位，需要轉換為 ppb (1 ppm = 1000 ppb)
         no2_ppb = value * 1000
         if no2_ppb <= 53:
             return calc_aqi(no2_ppb, 0, 53, 0, 50)
@@ -97,8 +141,6 @@ def calculate_aqi(parameter: str, value: float) -> int:
             return 500
     
     elif param == "so2":
-        # SO2 (ppb) - 1小時平均
-        # OpenAQ 以 ppm 為單位，需要轉換為 ppb
         so2_ppb = value * 1000
         if so2_ppb <= 35:
             return calc_aqi(so2_ppb, 0, 35, 0, 50)
@@ -112,7 +154,6 @@ def calculate_aqi(parameter: str, value: float) -> int:
             return 200
     
     elif param == "co":
-        # CO (ppm) - 8小時平均
         if value <= 4.4:
             return calc_aqi(value, 0, 4.4, 0, 50)
         elif value <= 9.4:
@@ -128,7 +169,6 @@ def calculate_aqi(parameter: str, value: float) -> int:
         else:
             return 500
     
-    # 未知參數的後備計算
     return min(round(value * 2), 300)
 
 
@@ -148,7 +188,6 @@ def get_nearby_locations(lat: float, lon: float, radius: int = 25000):
         r.raise_for_status()
         results = r.json().get("results", [])
         
-        # 按距離排序
         def calc_distance(loc):
             from math import radians, sin, cos, sqrt, atan2
             R = 6371
@@ -168,134 +207,90 @@ def get_nearby_locations(lat: float, lon: float, radius: int = 25000):
         return []
 
 
-def get_location_latest_df(location_id: int):
-    """獲取站點的最新值清單"""
+def get_sensor_hourly_data(sensor_id: int, hours: int = 12):
+    """
+    獲取 sensor 過去 N 小時的數據
+    返回: 按時間排序的濃度列表（從舊到新）
+    """
     try:
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(hours=hours)
+        
         r = requests.get(
-            f"{BASE}/locations/{location_id}/latest",
+            f"{BASE}/sensors/{sensor_id}/measurements",
             headers=headers,
-            params={"limit": 1000},
-            timeout=10
+            params={
+                "date_from": start_time.isoformat() + "Z",
+                "date_to": end_time.isoformat() + "Z",
+                "limit": 1000
+            },
+            timeout=15
         )
-        if r.status_code == 404:
-            return pd.DataFrame()
-        r.raise_for_status()
+        
+        if r.status_code != 200:
+            return []
+        
         results = r.json().get("results", [])
         if not results:
-            return pd.DataFrame()
-
-        df = pd.json_normalize(results)
-
-        # 參數名與單位
-        if "parameter.name" in df.columns:
-            df["parameter"] = df["parameter.name"].str.lower()
-        elif "parameter" in df.columns:
-            df["parameter"] = df["parameter"].str.lower()
-        else:
-            df["parameter"] = None
+            return []
         
-        df["units"] = df.get("parameter.units", df.get("units"))
-        df["value"] = df["value"]
-
-        # UTC 時間
-        df["ts_utc"] = pd.NaT
-        for col in ["datetime.utc", "period.datetimeTo.utc", "period.datetimeFrom.utc"]:
-            if col in df.columns:
-                ts = pd.to_datetime(df[col], errors="coerce", utc=True)
-                df["ts_utc"] = df["ts_utc"].where(df["ts_utc"].notna(), ts)
-
-        # 地方時間
-        local_col = None
-        for c in ["datetime.local", "period.datetimeTo.local", "period.datetimeFrom.local"]:
-            if c in df.columns:
-                local_col = c
-                break
-        df["ts_local"] = df[local_col] if local_col else None
-
-        return df[["parameter", "value", "units", "ts_utc", "ts_local"]]
-    except Exception as e:
-        print(f"Error fetching location latest: {e}")
-        return pd.DataFrame()
-
-
-def get_parameters_latest_df(location_id: int, target_params):
-    """用 /parameters/{pid}/latest 拿各參數最新值"""
-    rows = []
-    for p in target_params:
-        try:
-            pid = PARAM_IDS[p]
-            r = requests.get(
-                f"{BASE}/parameters/{pid}/latest",
-                headers=headers,
-                params={"locationId": location_id, "limit": 50},
-                timeout=10
-            )
-            if r.status_code == 404:
-                continue
-            r.raise_for_status()
-            res = r.json().get("results", [])
-            if not res:
-                continue
+        # 提取時間和數值
+        data_points = []
+        for item in results:
+            timestamp_str = None
+            if item.get("period", {}).get("datetimeFrom", {}).get("utc"):
+                timestamp_str = item["period"]["datetimeFrom"]["utc"]
+            elif item.get("datetime", {}).get("utc"):
+                timestamp_str = item["datetime"]["utc"]
             
-            df = pd.json_normalize(res)
-            df["parameter"] = p
-            df["units"] = df.get("parameter.units", df.get("units"))
-            df["value"] = df["value"]
+            if timestamp_str and isinstance(item.get("value"), (int, float)):
+                try:
+                    timestamp = pd.to_datetime(timestamp_str, utc=True)
+                    data_points.append({
+                        "time": timestamp,
+                        "value": float(item["value"])
+                    })
+                except:
+                    continue
+        
+        if not data_points:
+            return []
+        
+        # 按時間排序
+        df = pd.DataFrame(data_points)
+        df = df.sort_values("time")
+        
+        # 按小時分組，取每小時的平均值
+        df["hour"] = df["time"].dt.floor("H")
+        hourly = df.groupby("hour")["value"].mean().reset_index()
+        hourly = hourly.sort_values("hour")
+        
+        return hourly["value"].tolist()
+        
+    except Exception as e:
+        print(f"Error fetching hourly data: {e}")
+        return []
 
-            df["ts_utc"] = pd.NaT
-            for col in ["datetime.utc", "period.datetimeTo.utc", "period.datetimeFrom.utc"]:
-                if col in df.columns:
-                    ts = pd.to_datetime(df[col], errors="coerce", utc=True)
-                    df["ts_utc"] = df["ts_utc"].where(df["ts_utc"].notna(), ts)
 
-            local_col = None
-            for c in ["datetime.local", "period.datetimeTo.local", "period.datetimeFrom.local"]:
-                if c in df.columns:
-                    local_col = c
-                    break
-            df["ts_local"] = df[local_col] if local_col else None
-
-            rows.append(df[["parameter", "value", "units", "ts_utc", "ts_local"]])
-        except Exception as e:
-            print(f"Error fetching parameter {p}: {e}")
-            continue
-
-    if not rows:
-        return pd.DataFrame()
-    return pd.concat(rows, ignore_index=True)
-
-
-def pick_batch_near(df, t_ref, tol_minutes: int):
-    """批次時間對齊"""
-    if df.empty or pd.isna(t_ref):
-        return pd.DataFrame()
-
-    df = df.copy()
-
-    def _scalarize(v):
-        if isinstance(v, (list, tuple, np.ndarray)):
-            return v[0] if len(v) else None
-        return v
-
-    df["ts_utc"] = df["ts_utc"].map(_scalarize)
-    df["ts_utc"] = pd.to_datetime(df["ts_utc"], errors="coerce", utc=True)
-
-    df["dt_diff"] = (df["ts_utc"] - t_ref).abs()
-
-    tol = pd.Timedelta(minutes=tol_minutes)
-    df = df[df["dt_diff"] <= tol]
-    if df.empty:
-        return df
-
-    df = df.sort_values(["parameter", "dt_diff", "ts_utc"], ascending=[True, True, False])
-    df = df.drop_duplicates(subset=["parameter"], keep="first")
-    return df[["parameter", "value", "units", "ts_utc", "ts_local"]]
+def get_location_latest_with_sensors(location_id: int):
+    """獲取站點資訊（包含 sensors）"""
+    try:
+        r = requests.get(
+            f"{BASE}/locations/{location_id}",
+            headers=headers,
+            timeout=10
+        )
+        r.raise_for_status()
+        return r.json().get("results", [None])[0]
+    except Exception as e:
+        print(f"Error fetching location info: {e}")
+        return None
 
 
 def get_latest_air_quality(lat: float, lon: float):
-    """獲取最新空氣品質數據"""
+    """獲取最新空氣品質數據（使用 NowCast）"""
     try:
-        print(f"\n=== Fetching air quality for ({lat:.4f}, {lon:.4f}) ===")
+        print(f"\n=== Fetching air quality with NowCast for ({lat:.4f}, {lon:.4f}) ===")
         
         # 1. 獲取附近站點
         locations = get_nearby_locations(lat, lon)
@@ -308,88 +303,61 @@ def get_latest_air_quality(lat: float, lon: float):
 
         print(f"Using location: {location_name} (ID: {location_id})")
 
-        # 2. 獲取站點最新值清單
-        df_loc_latest = get_location_latest_df(location_id)
-        if df_loc_latest.empty:
-            return {"error": "No data from location latest endpoint"}
+        # 2. 獲取站點詳細資訊（包含 sensors）
+        location_detail = get_location_latest_with_sensors(location_id)
+        if not location_detail or not location_detail.get("sensors"):
+            return {"error": "No sensors found for this location"}
 
-        # 3. 找批次時間
-        t_star = df_loc_latest["ts_utc"].max()
-        if pd.isna(t_star):
-            return {"error": "No valid timestamp"}
+        sensors = location_detail["sensors"]
+        print(f"Found {len(sensors)} sensors")
 
-        print(f"Batch time: {t_star}")
-
-        # 4. 在 location latest 中找接近批次時間的數據
-        df_at_batch = pick_batch_near(df_loc_latest, t_star, TOL_MINUTES_PRIMARY)
-        if df_at_batch.empty:
-            df_at_batch = pick_batch_near(df_loc_latest, t_star, TOL_MINUTES_FALLBACK)
-
-        have = set(df_at_batch["parameter"].str.lower().tolist()) if not df_at_batch.empty else set()
-
-        # 5. 補齊缺失的參數
-        missing = [p for p in TARGET_PARAMS if p not in have]
-        if missing:
-            print(f"Missing parameters: {missing}")
-            df_param_latest = get_parameters_latest_df(location_id, missing)
-            df_param_batch = pick_batch_near(df_param_latest, t_star, TOL_MINUTES_PRIMARY)
-            if df_param_batch.empty:
-                df_param_batch = pick_batch_near(df_param_latest, t_star, TOL_MINUTES_FALLBACK)
-        else:
-            df_param_batch = pd.DataFrame()
-
-        # 6. 合併
-        frames = []
-        if not df_at_batch.empty:
-            frames.append(df_at_batch)
-        if not df_param_batch.empty:
-            frames.append(df_param_batch)
-
-        if not frames:
-            return {"error": "No aligned batch data"}
-
-        df_all = pd.concat(frames, ignore_index=True)
-        df_all["parameter"] = df_all["parameter"].str.lower()
-        df_all = df_all[df_all["parameter"].isin(TARGET_PARAMS)]
+        # 3. 找到 PM2.5 sensor
+        pm25_sensor = None
+        for sensor in sensors:
+            param_name = sensor.get("parameter", {}).get("name", "").lower()
+            if "pm2.5" in param_name or "pm25" in param_name:
+                pm25_sensor = sensor
+                break
         
-        # 去重
-        df_all["dt_diff"] = (df_all["ts_utc"] - t_star).abs()
-        df_all = df_all.sort_values(["parameter", "dt_diff", "ts_utc"], ascending=[True, True, False])
-        df_all = df_all.drop_duplicates(subset=["parameter"], keep="first")
-        df_all = df_all.drop(columns=["dt_diff"])
+        if not pm25_sensor:
+            return {"error": "No PM2.5 sensor found"}
 
-        # 7. 計算 AQI（使用 2024 EPA 標準）
-        max_aqi = 0
-        dominant_pollutant = ""
-        dominant_value = 0
-        dominant_timestamp = ""
+        sensor_id = pm25_sensor["id"]
+        print(f"Using PM2.5 sensor ID: {sensor_id}")
 
-        measurements = []
-        for _, row in df_all.iterrows():
-            param = row["parameter"]
-            value = row["value"]
-            aqi = calculate_aqi(param, value)
-            
-            measurements.append({
-                "parameter": param,
-                "value": float(value),
-                "units": row["units"],
-                "aqi": aqi,
-                "timestamp": row["ts_utc"].isoformat() if pd.notna(row["ts_utc"]) else None
-            })
+        # 4. 獲取過去 12 小時的數據
+        print(f"Fetching 12-hour data for NowCast...")
+        hourly_values = get_sensor_hourly_data(sensor_id, hours=12)
+        
+        if not hourly_values:
+            return {"error": "No historical data available for NowCast"}
 
-            print(f"{param}: AQI {aqi} (from {value} {row['units']}) [EPA 2024]")
+        print(f"Got {len(hourly_values)} hours of data")
 
-            if aqi > max_aqi:
-                max_aqi = aqi
-                dominant_pollutant = param
-                dominant_value = float(value)
-                dominant_timestamp = row["ts_utc"].isoformat() if pd.notna(row["ts_utc"]) else None
+        # 5. 計算 NowCast
+        nowcast_value = calculate_nowcast(hourly_values)
+        
+        if nowcast_value is None:
+            return {"error": "Failed to calculate NowCast"}
 
-        print(f"Final AQI: {max_aqi}, Dominant: {dominant_pollutant}")
-        print(f"Using EPA 2024 Standard (PM2.5 Good: 0-9.0 µg/m³)")
+        # 6. 用 NowCast 值計算 AQI
+        aqi = calculate_aqi("pm25", nowcast_value)
+        
+        print(f"\n✅ Final NowCast AQI: {aqi}")
+        print(f"   NowCast PM2.5: {nowcast_value:.1f} µg/m³")
+        print(f"   Instant PM2.5: {hourly_values[-1]:.1f} µg/m³ (for reference)")
 
-        # 8. 返回結果
+        # 7. 獲取其他污染物的即時值（可選）
+        measurements = [{
+            "parameter": "pm25",
+            "value": float(nowcast_value),
+            "instant_value": float(hourly_values[-1]),
+            "units": "µg/m³",
+            "aqi": aqi,
+            "method": "NowCast (12-hour weighted average)",
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }]
+
         return {
             "success": True,
             "location": {
@@ -398,12 +366,13 @@ def get_latest_air_quality(lat: float, lon: float):
                 "latitude": location["coordinates"]["latitude"],
                 "longitude": location["coordinates"]["longitude"]
             },
-            "aqi": max_aqi,
-            "pollutant": dominant_pollutant.upper(),
-            "concentration": dominant_value,
-            "timestamp": dominant_timestamp,
+            "aqi": aqi,
+            "pollutant": "PM25",
+            "concentration": float(nowcast_value),
+            "timestamp": datetime.utcnow().isoformat() + "Z",
             "measurements": measurements,
-            "standard": "EPA 2024"
+            "standard": "EPA 2024 with NowCast",
+            "note": "NowCast uses 12-hour weighted average, matching AirNow.gov methodology"
         }
 
     except Exception as e:
@@ -417,7 +386,6 @@ def get_latest_air_quality(lat: float, lon: float):
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            # 解析查詢參數
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(self.path)
             params = parse_qs(parsed.query)
@@ -433,10 +401,8 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Missing lat/lon parameters"}).encode())
                 return
             
-            # 獲取空氣品質數據
             result = get_latest_air_quality(lat, lon)
             
-            # 返回結果
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
