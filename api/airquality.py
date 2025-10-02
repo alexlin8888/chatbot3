@@ -12,6 +12,17 @@ BASE = "https://api.openaq.org/v3"
 
 # 目標污染物參數
 TARGET_PARAMS = ["co", "no2", "o3", "pm10", "pm25", "so2"]
+PARAM_IDS = {"co": 8, "no2": 7, "o3": 10, "pm10": 1, "pm25": 2, "so2": 9}
+
+# 時間容忍度設定
+TOL_MINUTES_PRIMARY = 5
+TOL_MINUTES_FALLBACK = 60
+
+def _scalarize(v):
+    """工具函式：將列表/數組轉為單一值"""
+    if isinstance(v, (list, tuple, np.ndarray)):
+        return v[0] if len(v) else None
+    return v
 
 def get_nearby_locations(lat: float, lon: float, radius: int = 25000):
     """獲取附近的監測站點"""
@@ -47,6 +58,97 @@ def get_nearby_locations(lat: float, lon: float, radius: int = 25000):
     except Exception as e:
         print(f"獲取附近站點錯誤: {e}")
         return []
+
+def get_location_latest_df(location_id: int) -> pd.DataFrame:
+    """獲取站點最新值清單"""
+    try:
+        url = f"{BASE}/locations/{location_id}/latest"
+        r = requests.get(url, headers=headers, params={"limit": 1000})
+        if r.status_code == 404:
+            return pd.DataFrame()
+        r.raise_for_status()
+
+        data = r.json()
+        results = data.get("results") or []
+        if not isinstance(results, list) or not results:
+            return pd.DataFrame()
+
+        df = pd.json_normalize(results)
+
+        # 建立標準時間欄位
+        if "datetime.utc" in df.columns:
+            df["ts_utc"] = pd.to_datetime(df["datetime.utc"], errors="coerce", utc=True)
+        else:
+            df["ts_utc"] = pd.NaT
+        df["ts_local"] = df["datetime.local"] if "datetime.local" in df.columns else None
+
+        # sensorsId 保障存在
+        if "sensorsId" not in df.columns:
+            df["sensorsId"] = None
+
+        # 先放 "--" 當占位，稍後再用 sensorsId 查污染物名稱
+        df["parameter"] = "--"
+
+        keep_cols = ["parameter", "value", "sensorsId", "locationsId", "ts_utc", "ts_local"]
+        for col in keep_cols:
+            if col not in df.columns:
+                df[col] = None
+
+        return df[keep_cols]
+    except Exception as e:
+        print(f"獲取站點最新數據錯誤: {e}")
+        return pd.DataFrame()
+
+def get_parameter_from_sensor(sensor_id: int) -> str:
+    """根據 sensorId 查污染物"""
+    try:
+        r = requests.get(f"{BASE}/sensors/{sensor_id}", headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        results = data.get("results")
+
+        if isinstance(results, list):
+            for item in results:
+                param = item.get("parameter")
+                if isinstance(param, dict) and "name" in param:
+                    return str(param["name"]).lower()
+        elif isinstance(results, dict):
+            param = results.get("parameter")
+            if isinstance(param, dict) and "name" in param:
+                return str(param["name"]).lower()
+
+    except Exception as e:
+        print(f"⚠️ 無法查 sensor {sensor_id}: {e}")
+
+    return "--"
+
+def pick_batch_near(df: pd.DataFrame, t_ref: pd.Timestamp, tol_minutes: int) -> pd.DataFrame:
+    """在 t_ref 附近挑同批資料（用 sensorsId 去重）"""
+    if df.empty or pd.isna(t_ref):
+        print("⚠️ DataFrame 為空，或 t_ref 無效")
+        return pd.DataFrame()
+
+    df = df.copy()
+    df["ts_utc"] = pd.to_datetime(df["ts_utc"], errors="coerce", utc=True)
+
+    df["dt_diff"] = (df["ts_utc"] - t_ref).abs()
+    tol = pd.Timedelta(minutes=tol_minutes)
+    df = df[df["dt_diff"] <= tol]
+
+    if df.empty:
+        print(f"⚠️ 在 {t_ref} ± {tol_minutes} 分鐘內沒有找到任何資料")
+        return df
+
+    # 不要用 parameter 去重，因為當它是 "--" 時會只剩一筆
+    df = df.sort_values(["dt_diff", "ts_utc"], ascending=[True, False])
+    df = df.drop_duplicates(subset=["sensorsId"], keep="first")
+
+    need_cols = ["parameter", "value", "ts_utc", "ts_local", "sensorsId"]
+    for col in need_cols:
+        if col not in df.columns:
+            df[col] = None
+
+    return df[need_cols]
 
 def calculate_aqi(parameter: str, value: float) -> int:
     """根據污染物濃度計算 AQI（使用 EPA 2024 標準）"""
@@ -160,7 +262,7 @@ def calculate_aqi(parameter: str, value: float) -> int:
     return min(round(value * 2), 300)
 
 def get_comprehensive_air_quality(lat: float, lon: float):
-    """修復後的空氣質量數據獲取"""
+    """修復後的空氣質量數據獲取 - 使用正確的邏輯"""
     try:
         print(f"\n=== 獲取空氣質量數據 ({lat:.4f}, {lon:.4f}) ===")
         
@@ -175,101 +277,68 @@ def get_comprehensive_air_quality(lat: float, lon: float):
         
         print(f"使用站點: {location_name} (ID: {location_id})")
 
-        # 2. 使用最新的端點獲取數據 - 修復 404 錯誤
+        # 2. 獲取該測站的最新清單
+        df_loc_latest = get_location_latest_df(location_id)
+        if df_loc_latest.empty:
+            return {"error": "測站沒有資料"}
+
+        # 3. 以該批次最新時間為錨點，挑同一時間附近的資料
+        t_star = pd.to_datetime(df_loc_latest["ts_utc"], utc=True).max()
+        df_at_batch = pick_batch_near(df_loc_latest, t_star, TOL_MINUTES_PRIMARY)
+        if df_at_batch.empty:
+            df_at_batch = pick_batch_near(df_loc_latest, t_star, TOL_MINUTES_FALLBACK)
+        if df_at_batch.empty:
+            return {"error": "沒有找到對齊時間的數據"}
+
+        # 4. 以 sensorsId 批次補齊污染物名稱
+        sensor_ids = [int(s) for s in df_at_batch["sensorsId"].dropna().unique().tolist()]
+        param_map = {sid: get_parameter_from_sensor(sid) for sid in sensor_ids}
+        print("🔎 sensor -> parameter:", param_map)
+
+        # 5. 處理測量數據
         measurements = []
-        try:
-            # 使用 locations/{id}/latest 端點
-            r = requests.get(
-                f"{BASE}/locations/{location_id}/latest",
-                headers=headers,
-                timeout=10
-            )
-            
-            print(f"API 響應狀態: {r.status_code}")
-            
-            if r.status_code == 200:
-                results = r.json().get("results", [])
-                print(f"獲取到 {len(results)} 個參數的數據")
-                
-                # 處理每個參數的數據
-                for item in results:
-                    parameter = item.get("parameter", "").lower()
-                    if parameter in TARGET_PARAMS:
-                        value = item.get("value")
-                        if value is not None:
-                            # 獲取時間信息
-                            date_info = item.get("date", {})
-                            timestamp = date_info.get("utc", "")
-                            
-                            # 計算 AQI
-                            aqi = calculate_aqi(parameter, float(value))
-                            
-                            measurements.append({
-                                "parameter": parameter.upper(),
-                                "value": float(value),
-                                "units": item.get("unit", "unknown"),
-                                "aqi": aqi,
-                                "timestamp": timestamp,
-                                "method": "locations/latest"
-                            })
-                            print(f"  {parameter}: {value} → AQI: {aqi}")
-            else:
-                print(f"API 請求失敗: {r.status_code}, 響應: {r.text}")
-                
-                # 備用方案：嘗試使用 measurements 端點
-                print("嘗試備用方案...")
-                r_fallback = requests.get(
-                    f"{BASE}/measurements",
-                    headers=headers,
-                    params={
-                        "location_id": location_id,
-                        "limit": 20,
-                        "order_by": "datetime",
-                        "sort": "desc"
-                    },
-                    timeout=10
-                )
-                
-                if r_fallback.status_code == 200:
-                    fallback_results = r_fallback.json().get("results", [])
-                    print(f"備用方案獲取到 {len(fallback_results)} 條數據")
-                    
-                    # 按參數分組，取最新值
-                    param_data = {}
-                    for item in fallback_results:
-                        param = item.get("parameter", "").lower()
-                        if param in TARGET_PARAMS and param not in param_data:
-                            value = item.get("value")
-                            if value is not None:
-                                param_data[param] = {
-                                    "value": float(value),
-                                    "units": item.get("unit", "unknown"),
-                                    "timestamp": item.get("date", {}).get("utc", "")
-                                }
-                    
-                    for param, data in param_data.items():
-                        aqi = calculate_aqi(param, data["value"])
-                        measurements.append({
-                            "parameter": param.upper(),
-                            "value": data["value"],
-                            "units": data["units"],
-                            "aqi": aqi,
-                            "timestamp": data["timestamp"],
-                            "method": "measurements fallback"
-                        })
-                else:
-                    return {"error": f"所有數據獲取方法都失敗: locations/{r.status_code}, measurements/{r_fallback.status_code}"}
+        values = {}
         
-        except Exception as e:
-            print(f"數據獲取異常: {e}")
-            import traceback
-            traceback.print_exc()
-            return {"error": f"數據獲取異常: {str(e)}"}
+        for _, row in df_at_batch.iterrows():
+            sid = int(row["sensorsId"]) if pd.notna(row["sensorsId"]) else None
+            param = param_map.get(sid, "--")
+            value = row["value"]
+            
+            if param in TARGET_PARAMS and value is not None:
+                aqi = calculate_aqi(param, float(value))
+                measurements.append({
+                    "parameter": param.upper(),
+                    "value": float(value),
+                    "units": "unknown",  # 可以從 sensor API 獲取單位
+                    "aqi": aqi,
+                    "timestamp": str(row["ts_utc"]),
+                    "method": "sensor_based"
+                })
+                values[param] = float(value)
+                print(f"  {param}: {value} → AQI: {aqi}")
+
+        # 6. 如果沒有找到目標污染物，至少返回原始數據
+        if not measurements:
+            for _, row in df_at_batch.iterrows():
+                sid = int(row["sensorsId"]) if pd.notna(row["sensorsId"]) else None
+                param = param_map.get(sid, f"sensor_{sid}")
+                value = row["value"]
+                if value is not None:
+                    aqi = calculate_aqi(param, float(value))
+                    measurements.append({
+                        "parameter": param.upper(),
+                        "value": float(value),
+                        "units": "unknown",
+                        "aqi": aqi,
+                        "timestamp": str(row["ts_utc"]),
+                        "method": "raw_sensor"
+                    })
+                    values[param] = float(value)
 
         if not measurements:
             return {"error": "無有效的污染物測量值"}
 
-        # 3. 計算主要污染物和AQI
+        # 7. 計算主要污染物和AQI
         highest_aqi = 0
         dominant_pollutant = "PM25"
         
@@ -301,7 +370,8 @@ def get_comprehensive_air_quality(lat: float, lon: float):
             "concentration": float(dominant_concentration),
             "timestamp": datetime.utcnow().isoformat() + "Z",
             "measurements": measurements,
-            "standard": "EPA 2024"
+            "standard": "EPA 2024",
+            "note": "使用 sensor-based 方法"
         }
         
     except Exception as e:
