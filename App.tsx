@@ -9,6 +9,8 @@ import ThemeToggle from './components/ThemeToggle';
 import { generateHealthAdvice, generateSmartSchedule, generateAirStoryForChild, generateImageFromStory } from './services/geminiService';
 import { getLatestMeasurements, getHistoricalData, getForecastData, getLocationName } from './services/openaqService';
 
+import RealTimeAirQuality from './components/RealTimeAirQuality';
+
 
 // --- Icon Components ---
 const HeartIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 016.364 0L12 7.636l1.318-1.318a4.5 4.5 0 116.364 6.364L12 20.364l-7.682-7.682a4.5 4.5 0 010-6.364z" /></svg>;
@@ -35,6 +37,12 @@ export default function App() {
   const [geoError, setGeoError] = useState<string | null>(null);
 
   const [userProfile] = useState<UserHealthProfile>({ name: 'Alex', hasAllergies: false, hasAsthma: true, hasCardiopulmonaryDisease: false });
+
+  const [realTimeData, setRealTimeData] = useState<RealTimeAirQualityType | FlaskAirQuality | null>(null);
+  const [realTimeLoading, setRealTimeLoading] = useState(false);
+  const [realTimeError, setRealTimeError] = useState<string | null>(null);
+
+
   
   // Data states
   const [hourlyForecast, setHourlyForecast] = useState<HourlyForecastData[]>([]);
@@ -57,6 +65,25 @@ export default function App() {
     else document.documentElement.classList.remove('dark');
     localStorage.setItem('theme', theme);
   }, [theme]);
+
+  // --- Fetch Real-time AQI ---
+  useEffect(() => {
+    const fetchRealTimeAQI = async () => {
+      setRealTimeLoading(true);
+      try {
+        const res = await fetch(`https://realtime-aqi-2381.onrender.com/get_aqi?lat=22.62&lon=120.27`);
+        if (!res.ok) throw new Error("Flask API failed");
+        const json = await res.json();
+        setRealTimeData(json);
+      } catch (err: any) {
+        setRealTimeError(err.message);
+      } finally {
+        setRealTimeLoading(false);
+      }
+    };
+    fetchRealTimeAQI();
+  }, []);
+
 
   const toggleTheme = () => {
     setTheme(prevTheme => (prevTheme === 'light' ? 'dark' : 'light'));
@@ -215,6 +242,7 @@ export default function App() {
         {/* Main Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 space-y-6">
+            <RealTimeAirQuality data={realTimeData} loading={realTimeLoading} error={realTimeError} />
             {currentAQI ? (
                 <AQIIndicator aqi={currentAQI.aqi} />
             ) : (
