@@ -242,8 +242,7 @@ export default function App() {
         {/* Main Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 space-y-6">
-            <RealTimeAirQuality data={realTimeData} loading={realTimeLoading} error={realTimeError} />
-            {currentAQI ? (
+             {currentAQI ? (
                 <AQIIndicator aqi={currentAQI.aqi} />
             ) : (
                  <div className="bg-slate-200 dark:bg-slate-800 p-6 rounded-3xl shadow-lg flex flex-col items-center justify-center text-center min-h-[344px]">
@@ -253,6 +252,7 @@ export default function App() {
                     </p>
                 </div>
             )}
+            <RealTimeAirQuality data={realTimeData} loading={realTimeLoading} error={realTimeError} />
              <Card title="Personalized Health Advice" icon={<HeartIcon />}>
               {loading.advice ? <div className="flex justify-center items-center h-20"><LoadingSpinner /></div> : healthAdvice ? <p>{healthAdvice}</p> : <p className="text-center text-slate-500 dark:text-slate-400 py-4">{!currentAQI ? "Current air quality data is unavailable." : "Click 'Generate AI Insights' to get personalized health advice."}</p>}
             </Card>
