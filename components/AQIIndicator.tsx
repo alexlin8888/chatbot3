@@ -61,6 +61,35 @@ const AQIIndicator: React.FC<AQIIndicatorProps> = ({ aqi }) => {
   const circumference = 2 * Math.PI * 70;
   const strokeDashoffset = circumference - (Math.min(aqi, 301) / 301) * circumference;
 
+  // 從顏色字符串中提取實際的顏色值
+  const getGradientColors = (colorString: string) => {
+    const colorMap: { [key: string]: string } = {
+      'green-400': '#4ade80',
+      'emerald-500': '#10b981',
+      'yellow-400': '#facc15',
+      'amber-500': '#f59e0b',
+      'orange-400': '#fb923c',
+      'orange-600': '#ea580c',
+      'red-400': '#f87171',
+      'red-600': '#dc2626',
+      'purple-400': '#c084fc',
+      'purple-600': '#9333ea',
+      'rose-600': '#e11d48',
+      'red-800': '#991b1b',
+    };
+
+    const parts = colorString.split(' ');
+    const fromColor = parts[0]?.replace('from-', '') || 'green-400';
+    const toColor = parts[1]?.replace('to-', '') || 'emerald-500';
+    
+    return {
+      start: colorMap[fromColor] || '#10b981',
+      end: colorMap[toColor] || '#10b981'
+    };
+  };
+
+  const gradientColors = getGradientColors(aqiLevel.color);
+
   return (
     <div className={`${aqiLevel.bgColor} backdrop-blur-xl border border-white/20 dark:border-slate-700/50 p-8 rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-300`}>
       <h2 className="text-xl font-bold text-slate-700 dark:text-slate-200 text-center mb-6">Current AQI</h2>
@@ -68,6 +97,13 @@ const AQIIndicator: React.FC<AQIIndicatorProps> = ({ aqi }) => {
       {/* Circular Progress */}
       <div className="relative w-48 h-48 mx-auto my-6">
         <svg className="w-full h-full transform -rotate-90" viewBox="0 0 160 160">
+          <defs>
+            <linearGradient id={`gradient-${aqi}`} x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor={gradientColors.start} />
+              <stop offset="100%" stopColor={gradientColors.end} />
+            </linearGradient>
+          </defs>
+          
           {/* Background circle */}
           <circle 
             className="text-slate-200/50 dark:text-slate-700/50" 
@@ -78,25 +114,20 @@ const AQIIndicator: React.FC<AQIIndicatorProps> = ({ aqi }) => {
             cx="80" 
             cy="80" 
           />
+          
           {/* Progress circle */}
           <circle 
-            className={`bg-gradient-to-r ${aqiLevel.color} transition-all duration-1000 ease-out`}
+            className="transition-all duration-1000 ease-out"
             strokeWidth="14" 
             strokeDasharray={circumference} 
             strokeDashoffset={strokeDashoffset} 
             strokeLinecap="round" 
-            stroke="url(#gradient)" 
+            stroke={`url(#gradient-${aqi})`}
             fill="transparent" 
             r="70" 
             cx="80" 
             cy="80" 
           />
-          <defs>
-            <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" className={aqiLevel.color.split(' ')[0].replace('from-', '')} />
-              <stop offset="100%" className={aqiLevel.color.split(' ')[2].replace('to-', '')} />
-            </linearGradient>
-          </defs>
         </svg>
         
         {/* Center content */}
