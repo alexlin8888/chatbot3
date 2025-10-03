@@ -116,34 +116,52 @@ export const getHistoricalData = async (
   }
 };
 
-// 預測數據
 export const getForecastData = async (
   latitude: number,
   longitude: number
 ): Promise<HourlyForecastData[]> => {
   try {
-    const latest = await getLatestMeasurements(latitude, longitude);
+    console.log('🔮 調用模型預測 API...');
     
-    if (!latest) {
-      console.warn('無最新測量數據用於預測');
-      return [];
+    // 調用新的預測端點
+    const response = await fetch(`/api/forecast?hours=12`);
+    
+    if (!response.ok) {
+      console.error('預測 API 錯誤:', response.status);
+      throw new Error('預測失敗');
     }
+
+    const data = await response.json();
+    
+    if (!data.success || !data.predictions) {
+      throw new Error('無效的預測數據');
+    }
+
+    // 轉換為前端格式
+    const forecastData: HourlyForecastData[] = data.predictions.map((pred: any) => ({
+      hour: pred.hour,
+      aqi: pred.aqi || 0,
+      pollutant: PollutantEnum.PM25, // 可以根據 pollutants 中的最高值決定
+      concentration: pred.pollutants?.pm25 || 0,
+      timestamp: pred.timestamp,
+    }));
+
+    console.log(`✅ 成功獲取 ${forecastData.length} 小時預測`);
+    return forecastData;
+
+  } catch (error) {
+    console.error('預測數據獲取錯誤:', error);
+    
+    // 降級方案：使用當前 AQI 生成簡單預測
+    const latest = await getLatestMeasurements(latitude, longitude);
+    if (!latest) return [];
 
     const forecastData: HourlyForecastData[] = [];
     const now = new Date();
 
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 12; i++) {
       const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
-      let variation = (Math.random() - 0.5) * 20;
-      const hourOfDay = hour.getHours();
-      
-      // 根據時段調整
-      if (hourOfDay >= 6 && hourOfDay <= 10) {
-        variation -= 10; // 早上空氣較好
-      } else if (hourOfDay >= 14 && hourOfDay <= 18) {
-        variation += 15; // 下午交通尖峰
-      }
-      
+      const variation = (Math.random() - 0.5) * 20;
       const predictedAQI = Math.max(10, Math.min(300, latest.aqi + variation));
       
       forecastData.push({
@@ -155,11 +173,8 @@ export const getForecastData = async (
       });
     }
 
-    console.log(`✅ 生成 ${forecastData.length} 小時的預測數據`);
+    console.log('⚠️ 使用降級預測');
     return forecastData;
-  } catch (error) {
-    console.error('生成預測數據錯誤:', error);
-    return [];
   }
 };
 
