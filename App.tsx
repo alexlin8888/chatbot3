@@ -55,21 +55,42 @@ export default function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+const fetchRealTimeAQI = async (lat: number, lon: number) => {
+    setRealTimeLoading(true);
+    setRealTimeError(null);
+    try {
+      const res = await fetch(`https://realtime-aqi-2381.onrender.com/get_aqi?lat=${lat}&lon=${lon}`);
+      if (!res.ok) throw new Error("Flask API failed");
+      const json = await res.json();
+      setRealTimeData(json);
+    } catch (err: any) {
+      setRealTimeError(err.message);
+    } finally {
+      setRealTimeLoading(false);
+    }
+  };
+
+  // --- Fetch Real-time AQI ---
+  // useEffect(() => {
+  //   const fetchRealTimeAQI = async () => {
+  //     setRealTimeLoading(true);
+  //     try {
+  //       const res = await fetch(`https://realtime-aqi-2381.onrender.com/get_aqi?lat=22.62&lon=120.27`);
+  //       if (!res.ok) throw new Error("Flask API failed");
+  //       const json = await res.json();
+  //       setRealTimeData(json);
+  //     } catch (err: any) {
+  //       setRealTimeError(err.message);
+  //     } finally {
+  //       setRealTimeLoading(false);
+  //     }
+  //   };
+  //   fetchRealTimeAQI();
+  // }, []);
+
+  // 預設進入頁面時用舊金山座標抓 AQI
   useEffect(() => {
-    const fetchRealTimeAQI = async () => {
-      setRealTimeLoading(true);
-      try {
-        const res = await fetch(`https://realtime-aqi-2381.onrender.com/get_aqi?lat=22.62&lon=120.27`);
-        if (!res.ok) throw new Error("Flask API failed");
-        const json = await res.json();
-        setRealTimeData(json);
-      } catch (err: any) {
-        setRealTimeError(err.message);
-      } finally {
-        setRealTimeLoading(false);
-      }
-    };
-    fetchRealTimeAQI();
+    fetchRealTimeAQI(latitude, longitude);
   }, []);
 
   const toggleTheme = () => {
@@ -85,9 +106,18 @@ export default function App() {
     setGeoError(null);
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        setLatitude(position.coords.latitude);
-        setLongitude(position.coords.longitude);
+        // setLatitude(position.coords.latitude);
+        // setLongitude(position.coords.longitude);
+        // setIsLocating(false);
+
+        const { latitude, longitude } = position.coords;
+        setLatitude(latitude);
+        setLongitude(longitude);
+        setLocation(`Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`);
         setIsLocating(false);
+
+        // 用新座標抓 AQI
+        fetchRealTimeAQI(latitude, longitude);
       },
       (error) => {
         setGeoError(`Unable to retrieve your location: ${error.message}`);
