@@ -348,53 +348,6 @@ export default function App() {
               )}
             </Card>
           </div>
-
-          <div className="lg:col-span-2 space-y-6">
-            {hourlyForecast.length > 0 ? (
-              <ForecastChart data={hourlyForecast} />
-            ) : (
-              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 p-6 rounded-3xl shadow-xl h-80 flex justify-center items-center">
-                <p className="text-slate-500 dark:text-slate-400">Forecast data unavailable.</p>
-              </div>
-            )}
-            
-            <Card title="Smart Life Planner" icon={<ClockIcon />}>
-              {loading.schedule ? (
-                <div className="flex justify-center items-center h-32"><LoadingSpinner /></div>
-              ) : smartSchedule ? (
-                <div className="space-y-3">
-                  {smartSchedule.map((item, index) => (
-                    <div key={index} className="group p-4 bg-gradient-to-r from-slate-50 to-slate-100/50 dark:from-slate-700/30 dark:to-slate-700/50 hover:from-slate-100 hover:to-slate-50 dark:hover:from-slate-700/50 dark:hover:to-slate-700/30 rounded-xl transition-all border border-slate-200/50 dark:border-slate-600/50">
-                      <div className="flex items-start gap-3">
-                        <div className={`w-3 h-3 rounded-full mt-1.5 flex-shrink-0 shadow-lg ${
-                          item.health_risk === 'Low' ? 'bg-green-500' : 
-                          item.health_risk === 'Moderate' ? 'bg-yellow-500' : 
-                          'bg-red-500'
-                        }`}></div>
-                        <div className="flex-1">
-                          <p className="font-bold text-slate-800 dark:text-slate-100 mb-1">
-                            <span className="text-indigo-600 dark:text-indigo-400">{item.time}</span>
-                            <span className="mx-2">·</span>
-                            <span>{item.activity}</span>
-                          </p>
-                          <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">{item.reason}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-6">
-                  <div className="w-12 h-12 bg-slate-100 dark:bg-slate-700/50 rounded-xl flex items-center justify-center mx-auto mb-3">
-                    <ClockIcon />
-                  </div>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {!currentAQI ? "Forecast data is unavailable." : "Click 'Generate AI Insights' for a smart schedule."}
-                  </p>
-                </div>
-              )}
-            </Card>
-          </div>
           
           <div className="lg:col-span-3">
   <a 
