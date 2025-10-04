@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import type { AQIDataPoint, UserHealthProfile, HourlyForecastData, SmartScheduleSuggestion } from './types';
+import type { AQIDataPoint, UserHealthProfile, HourlyForecastData, HistoricalDataPoint, SmartScheduleSuggestion } from './types';
 import AQIIndicator from './components/AQIIndicator';
 import ForecastChart from './components/ForecastChart';
+import HistoryChart from './components/HistoryChart';
 import Card from './components/Card';
 import LoadingSpinner from './components/LoadingSpinner';
 import ThemeToggle from './components/ThemeToggle';
 import { generateHealthAdvice, generateSmartSchedule, generateAirStoryForChild, generateImageFromStory } from './services/geminiService';
-import { getLatestMeasurements, getForecastData, getLocationName } from './services/openaqService';
+import { getLatestMeasurements, getHistoricalData, getForecastData, getLocationName } from './services/openaqService';
 import RealTimeAirQuality from './components/RealTimeAirQuality';
 
 // Icon Components with improved styling
@@ -16,7 +17,6 @@ const BookOpenIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-
 const MapPinIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>;
 const SparklesIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6.5 17.5l-2-2M17.5 6.5l2 2M18.364 2.636l-2.828 2.828M5.636 18.364l2.828-2.828M12 18a6 6 0 100-12 6 6 0 000 12z" /></svg>;
 const LocationIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 1.657-1.343 3-3 3s-3-1.343-3-3 1.343-3 3-3 3 1.343 3 3z M12 11c0 1.657 1.343 3 3 3s3-1.343 3-3-1.343-3-3-3-3 1.343-3 3z M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z" /></svg>;
-const BrainIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>;
 
 export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -38,6 +38,7 @@ export default function App() {
   const [realTimeError, setRealTimeError] = useState<string | null>(null);
 
   const [hourlyForecast, setHourlyForecast] = useState<HourlyForecastData[]>([]);
+  const [historicalData, setHistoricalData] = useState<HistoricalDataPoint[]>([]);
   const [currentAQI, setCurrentAQI] = useState<AQIDataPoint | null>(null);
   
   const [healthAdvice, setHealthAdvice] = useState<string | null>(null);
@@ -46,7 +47,7 @@ export default function App() {
   const [airStoryImage, setAirStoryImage] = useState<string | null>(null);
   
   const [isDataLoading, setIsDataLoading] = useState(true);
-  const [loading, setLoading] = useState({ advice: false, schedule: false, story: false, storyImage: false, aiForecast: false });
+  const [loading, setLoading] = useState({ advice: false, schedule: false, story: false, storyImage: false });
 
   useEffect(() => {
     if (theme === 'dark') document.documentElement.classList.add('dark');
@@ -54,7 +55,7 @@ export default function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  const fetchRealTimeAQI = async (lat: number, lon: number) => {
+const fetchRealTimeAQI = async (lat: number, lon: number) => {
     setRealTimeLoading(true);
     setRealTimeError(null);
     try {
@@ -69,6 +70,25 @@ export default function App() {
     }
   };
 
+  // --- Fetch Real-time AQI ---
+  // useEffect(() => {
+  //   const fetchRealTimeAQI = async () => {
+  //     setRealTimeLoading(true);
+  //     try {
+  //       const res = await fetch(`https://realtime-aqi-2381.onrender.com/get_aqi?lat=22.62&lon=120.27`);
+  //       if (!res.ok) throw new Error("Flask API failed");
+  //       const json = await res.json();
+  //       setRealTimeData(json);
+  //     } catch (err: any) {
+  //       setRealTimeError(err.message);
+  //     } finally {
+  //       setRealTimeLoading(false);
+  //     }
+  //   };
+  //   fetchRealTimeAQI();
+  // }, []);
+
+  // 預設進入頁面時用舊金山座標抓 AQI
   useEffect(() => {
     fetchRealTimeAQI(latitude, longitude);
   }, []);
@@ -86,11 +106,17 @@ export default function App() {
     setGeoError(null);
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        // setLatitude(position.coords.latitude);
+        // setLongitude(position.coords.longitude);
+        // setIsLocating(false);
+
         const { latitude, longitude } = position.coords;
         setLatitude(latitude);
         setLongitude(longitude);
         setLocation(`Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`);
         setIsLocating(false);
+
+        // 用新座標抓 AQI
         fetchRealTimeAQI(latitude, longitude);
       },
       (error) => {
@@ -110,14 +136,16 @@ export default function App() {
       setAirStoryImage(null);
 
       try {
-        const [locationName, latest, forecast] = await Promise.all([
+        const [locationName, latest, historical, forecast] = await Promise.all([
           getLocationName(latitude, longitude),
           getLatestMeasurements(latitude, longitude),
+          getHistoricalData(latitude, longitude),
           getForecastData(latitude, longitude),
         ]);
 
         setLocation(locationName);
         setCurrentAQI(latest);
+        setHistoricalData(historical);
         setHourlyForecast(forecast);
         
         if (!latest) {
@@ -133,46 +161,10 @@ export default function App() {
     fetchAirQualityData();
   }, [latitude, longitude]);
 
-  const fetchAIForecast = async () => {
-    setLoading(prev => ({ ...prev, aiForecast: true }));
-    try {
-      const response = await fetch(`https://air-quality-predictor-y8se.onrender.com/predict?lat=${latitude}&lon=${longitude}`);
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch AI forecast');
-      }
-
-      const data = await response.json();
-      
-      if (data.predictions && Array.isArray(data.predictions)) {
-        const forecastData: HourlyForecastData[] = data.predictions.map((pred: any, index: number) => {
-          const hour = new Date();
-          hour.setHours(hour.getHours() + index);
-          
-          return {
-            hour: hour.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }),
-            aqi: Math.round(pred.predicted_aqi),
-            pollutant: currentAQI?.pollutant || 'PM₂.₅',
-            concentration: pred.predicted_pm25 || 0,
-            timestamp: hour.toISOString(),
-          };
-        });
-        
-        setHourlyForecast(forecastData);
-        console.log('✅ AI Forecast loaded:', forecastData.length, 'hours');
-      }
-    } catch (error) {
-      console.error('Error fetching AI forecast:', error);
-      setGeoError('Failed to load AI forecast. Using default forecast.');
-    } finally {
-      setLoading(prev => ({ ...prev, aiForecast: false }));
-    }
-  };
-
   const fetchGeminiData = useCallback(async () => {
-    if (!currentAQI || hourlyForecast.length === 0) return;
+    if (!currentAQI || hourlyForecast.length === 0 || historicalData.length === 0) return;
 
-    setLoading({ advice: true, schedule: true, story: true, storyImage: true, aiForecast: false });
+    setLoading({ advice: true, schedule: true, story: true, storyImage: true });
     setHealthAdvice(null);
     setSmartSchedule(null);
     setAirStory(null);
@@ -189,7 +181,7 @@ export default function App() {
     setSmartSchedule(schedule);
     setLoading(prev => ({ ...prev, schedule: false }));
 
-    const story = await generateAirStoryForChild(location, []);
+    const story = await generateAirStoryForChild(location, historicalData);
     setAirStory(story);
     setLoading(prev => ({ ...prev, story: false }));
 
@@ -198,7 +190,7 @@ export default function App() {
         setAirStoryImage(imageUrl);
     }
     setLoading(prev => ({ ...prev, storyImage: false }));
-  }, [currentAQI, userProfile, hourlyForecast, location]);
+  }, [currentAQI, userProfile, hourlyForecast, location, historicalData]);
   
   const isAnythingLoading = Object.values(loading).some(v => v);
 
@@ -278,27 +270,12 @@ export default function App() {
           </div>
         </header>
 
-        {/* Action Buttons */}
-        <div className="mb-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <button
-            onClick={fetchAIForecast}
-            disabled={loading.aiForecast || !currentAQI}
-            className="group relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-red-600 hover:from-purple-700 hover:via-pink-700 hover:to-red-700 disabled:from-slate-400 disabled:via-slate-400 disabled:to-slate-400 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-2xl transition-all duration-300 shadow-xl hover:shadow-2xl transform hover:-translate-y-0.5 disabled:transform-none"
-          >
-            <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
-            <div className="relative flex items-center justify-center gap-3">
-              {loading.aiForecast ? (
-                <><LoadingSpinner size="h-5 w-5" /><span>Loading AI Forecast...</span></>
-              ) : (
-                <><BrainIcon /><span>Get AI Forecast</span></>
-              )}
-            </div>
-          </button>
-
+        {/* AI Generate Button */}
+        <div className="mb-8">
           <button
             onClick={fetchGeminiData}
             disabled={isAnythingLoading || !currentAQI}
-            className="group relative overflow-hidden bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 disabled:from-slate-400 disabled:via-slate-400 disabled:to-slate-400 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-2xl transition-all duration-300 shadow-xl hover:shadow-2xl transform hover:-translate-y-0.5 disabled:transform-none"
+            className="w-full group relative overflow-hidden bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 disabled:from-slate-400 disabled:via-slate-400 disabled:to-slate-400 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-2xl transition-all duration-300 shadow-xl hover:shadow-2xl transform hover:-translate-y-0.5 disabled:transform-none"
           >
             <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
             <div className="relative flex items-center justify-center gap-3">
@@ -400,8 +377,18 @@ export default function App() {
               )}
             </Card>
           </div>
+          
+          {/* Full Width Sections */}
+          <div className="lg:col-span-3">
+            {historicalData.length > 0 ? (
+              <HistoryChart data={historicalData} />
+            ) : (
+              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 p-6 rounded-3xl shadow-xl h-80 flex justify-center items-center">
+                <p className="text-slate-500 dark:text-slate-400">Historical data unavailable.</p>
+              </div>
+            )}
+          </div>
 
-          {/* Air Story Section */}
           <div className="lg:col-span-3">
             <Card title="Air Story Mode" icon={<BookOpenIcon />}>
               <p className="italic text-indigo-600 dark:text-indigo-400 mb-6 font-medium">
@@ -435,7 +422,7 @@ export default function App() {
               ) : (
                 <div className="text-center py-6">
                   <p className="text-sm text-slate-500 dark:text-slate-400">
-                    Click 'Generate AI Insights' for a magical story.
+                    {!currentAQI ? "Historical data is unavailable." : "Click 'Generate AI Insights' for a magical story."}
                   </p>
                 </div>
               )}
