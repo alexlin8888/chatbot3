@@ -12,7 +12,7 @@ const mapParameterToPollutant = (parameter: string): Pollutant => {
     case 'PM2.5':
       return PollutantEnum.PM25;
     case 'PM10':
-      return PollutantEnum.PM25; // 注意：這裡保持與之前一致，但可以考慮修改
+      return PollutantEnum.PM25;
     case 'O3':
       return PollutantEnum.O3;
     case 'NO2':
@@ -32,28 +32,28 @@ export const getLatestMeasurements = async (
   longitude: number
 ): Promise<AQIDataPoint | null> => {
   try {
-    console.log(`\n🐍 呼叫 Python API 於 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
+    console.log(`\n呼叫 Python API 於 (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
     
     const response = await fetch(`${PYTHON_API_URL}?lat=${latitude}&lon=${longitude}`);
     
     if (!response.ok) {
-      console.error('❌ Python API 錯誤:', response.status);
+      console.error('Python API 錯誤:', response.status);
       return null;
     }
 
     const data = await response.json();
     
     if (data.error) {
-      console.error('❌ Python API 返回錯誤:', data.error);
+      console.error('Python API 返回錯誤:', data.error);
       return null;
     }
 
     if (!data.success) {
-      console.error('❌ Python API 失敗');
+      console.error('Python API 失敗');
       return null;
     }
 
-    console.log(`✅ Python API 成功:`);
+    console.log(`Python API 成功:`);
     console.log(`   地點: ${data.location.name}`);
     console.log(`   AQI: ${data.aqi}`);
     console.log(`   主要污染物: ${data.pollutant}`);
@@ -68,7 +68,7 @@ export const getLatestMeasurements = async (
       timestamp: data.timestamp,
     };
   } catch (error) {
-    console.error('❌ 呼叫 Python API 致命錯誤:', error);
+    console.error('呼叫 Python API 致命錯誤:', error);
     return null;
   }
 };
@@ -108,7 +108,7 @@ export const getHistoricalData = async (
       });
     }
 
-    console.log(`✅ 生成 ${historicalData.length} 天的歷史數據`);
+    console.log(`生成 ${historicalData.length} 天的歷史數據`);
     return historicalData;
   } catch (error) {
     console.error('生成歷史數據錯誤:', error);
@@ -116,52 +116,34 @@ export const getHistoricalData = async (
   }
 };
 
+// 預測數據 - 使用假數據
 export const getForecastData = async (
   latitude: number,
   longitude: number
 ): Promise<HourlyForecastData[]> => {
   try {
-    console.log('🔮 調用模型預測 API...');
-    
-    // 調用新的預測端點
-    const response = await fetch(`/api/forecast?hours=12`);
-    
-    if (!response.ok) {
-      console.error('預測 API 錯誤:', response.status);
-      throw new Error('預測失敗');
-    }
-
-    const data = await response.json();
-    
-    if (!data.success || !data.predictions) {
-      throw new Error('無效的預測數據');
-    }
-
-    // 轉換為前端格式
-    const forecastData: HourlyForecastData[] = data.predictions.map((pred: any) => ({
-      hour: pred.hour,
-      aqi: pred.aqi || 0,
-      pollutant: PollutantEnum.PM25, // 可以根據 pollutants 中的最高值決定
-      concentration: pred.pollutants?.pm25 || 0,
-      timestamp: pred.timestamp,
-    }));
-
-    console.log(`✅ 成功獲取 ${forecastData.length} 小時預測`);
-    return forecastData;
-
-  } catch (error) {
-    console.error('預測數據獲取錯誤:', error);
-    
-    // 降級方案：使用當前 AQI 生成簡單預測
     const latest = await getLatestMeasurements(latitude, longitude);
-    if (!latest) return [];
+    
+    if (!latest) {
+      console.warn('無最新測量數據用於預測');
+      return [];
+    }
 
     const forecastData: HourlyForecastData[] = [];
     const now = new Date();
 
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 24; i++) {
       const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
-      const variation = (Math.random() - 0.5) * 20;
+      let variation = (Math.random() - 0.5) * 20;
+      const hourOfDay = hour.getHours();
+      
+      // 根據時段調整
+      if (hourOfDay >= 6 && hourOfDay <= 10) {
+        variation -= 10; // 早上空氣較好
+      } else if (hourOfDay >= 14 && hourOfDay <= 18) {
+        variation += 15; // 下午交通尖峰
+      }
+      
       const predictedAQI = Math.max(10, Math.min(300, latest.aqi + variation));
       
       forecastData.push({
@@ -173,8 +155,11 @@ export const getForecastData = async (
       });
     }
 
-    console.log('⚠️ 使用降級預測');
+    console.log(`生成 ${forecastData.length} 小時的預測數據`);
     return forecastData;
+  } catch (error) {
+    console.error('生成預測數據錯誤:', error);
+    return [];
   }
 };
 
