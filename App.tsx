@@ -262,8 +262,6 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column */}
           <div className="lg:col-span-1 space-y-6">
-            <RealTimeAirQuality data={realTimeData} loading={realTimeLoading} error={realTimeError} />
-            
             {currentAQI ? (
               <AQIIndicator aqi={currentAQI.aqi} />
             ) : (
@@ -279,6 +277,8 @@ export default function App() {
                 </p>
               </div>
             )}
+            
+            <RealTimeAirQuality data={realTimeData} loading={realTimeLoading} error={realTimeError} />
             
             <Card title="Health Advice" icon={<HeartIcon />}>
               {loading.advice ? (
