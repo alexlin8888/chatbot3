@@ -399,7 +399,7 @@ export default function App() {
         </div>
 
        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 flex flex-col gap-6 items-stretch">
+          <div className="lg:col-span-1 flex flex-col gap-6">
             {currentAQI ? (
               <AQIIndicator aqi={currentAQI.aqi} />
             ) : (
@@ -425,7 +425,7 @@ export default function App() {
             {hourlyForecast.length > 0 ? (
               <ForecastChart data={hourlyForecast} />
             ) : (
-              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 p-6 rounded-3xl shadow-xl h-80 flex justify-center items-center">
+              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 p-6 rounded-3xl shadow-xl h-80 flex justify-center items-center  min-h-[344px]">
                 <p className="text-slate-500 dark:text-slate-400">Forecast data unavailable.</p>
               </div>
             )}
