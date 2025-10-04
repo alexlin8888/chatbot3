@@ -261,7 +261,7 @@ export default function App() {
         {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column */}
-          <div className="lg:col-span-1 space-y-6">
+          <div className="lg:col-span-1 flex flex-col gap-6">
             {currentAQI ? (
               <AQIIndicator aqi={currentAQI.aqi} />
             ) : (
@@ -278,9 +278,11 @@ export default function App() {
               </div>
             )}
             
-            <RealTimeAirQuality data={realTimeData} loading={realTimeLoading} error={realTimeError} />
+            <div className="flex-1">
+              <RealTimeAirQuality data={realTimeData} loading={realTimeLoading} error={realTimeError} />
+            </div>
             
-            <Card title="Health Advice" icon={<HeartIcon />}>
+            <Card title="Health Advice" icon={<HeartIcon />} className="flex-shrink-0">
               {loading.advice ? (
                 <div className="flex justify-center items-center h-20"><LoadingSpinner /></div>
               ) : healthAdvice ? (
