@@ -436,7 +436,7 @@ export default function App() {
               ) : smartSchedule ? (
                 <div className="space-y-3">
                   {smartSchedule.map((item, index) => (
-                    <div key={index} className="group p-4 bg-gradient-to-r from-slate-50 to-slate-100/50 dark:from-slate-700/30 dark:to-slate-700/50 hover:from-slate-100 hover:to-slate-50 dark:hover:from-slate-700/50 dark:hover:to-slate-700/30 rounded-xl transition-all border border-slate-200/50 dark:border-slate-600/50">
+                    <div key={index} className="group p-4 bg-gradient-to-r from-slate-50 to-slate-100/50 dark:from-slate-700/30 dark:to-slate-700/50 hover:from-slate-100 hover:to-slate-50 dark:hover:from-slate-700/50 dark:hover:to-slate-700/30 rounded-xl transition-all border border-slate-200/50 dark:border-slate-600/50 min-h-[344px]">
                       <div className="flex items-start gap-3">
                         <div className={`w-3 h-3 rounded-full mt-1.5 flex-shrink-0 shadow-lg ${
                           item.health_risk === 'Low' ? 'bg-green-500' : 
@@ -473,7 +473,7 @@ export default function App() {
               ) : healthAdvice ? (
                 <p className="leading-relaxed">{healthAdvice}</p>
               ) : (
-                <div className="text-center py-4">
+                <div className="text-center py-4 min-h-[235px]">
                   <div className="flex items-center justify-center gap-3">
                     <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700/50 rounded-xl flex items-center justify-center">
                       <HeartIcon />
