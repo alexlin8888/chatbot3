@@ -278,9 +278,13 @@ export default function App() {
     setLoading(prev => ({ ...prev, story: false }));
 
     if (story) {
-        const imageUrl = await generateImageFromStory(story);
-        setAirStoryImage(imageUrl);
-    }
+    // 計算平均 AQI
+    const avgAQI = historicalData.reduce((sum, d) => sum + d.aqi, 0) / historicalData.length;
+    
+    // 傳入 avgAQI 參數
+    const imageUrl = await generateImageFromStory(story, avgAQI);
+    setAirStoryImage(imageUrl);
+}
     setLoading(prev => ({ ...prev, storyImage: false }));
   }, [currentAQI, userProfile, hourlyForecast, location, historicalData]);
   
