@@ -132,7 +132,7 @@ export const getForecastData = async (
     const forecastData: HourlyForecastData[] = [];
     const now = new Date();
 
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 12; i++) {
       const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
       let variation = (Math.random() - 0.5) * 20;
       const hourOfDay = hour.getHours();
