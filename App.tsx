@@ -26,11 +26,12 @@ export default function App() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
 
-  const [latitude, setLatitude] = useState(37.7749);
-  const [longitude, setLongitude] = useState(-122.4194);
-  const [location, setLocation] = useState('San Francisco, US');
-  const [isLocating, setIsLocating] = useState(false);
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [location, setLocation] = useState('Detecting your location...');
+  const [isLocating, setIsLocating] = useState(true);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
   const [userProfile] = useState<UserHealthProfile>({ name: 'Alex', hasAllergies: false, hasAsthma: true, hasCardiopulmonaryDisease: false });
 
   const [realTimeData, setRealTimeData] = useState<any>(null);
@@ -71,7 +72,86 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchRealTimeAQI(latitude, longitude);
+    if (latitude !== null && longitude !== null) {
+      fetchRealTimeAQI(latitude, longitude);
+    }
+  }, []);
+
+  // 自動獲取使用者位置
+  useEffect(() => {
+    const getUserLocation = () => {
+      if (!navigator.geolocation) {
+        console.warn('Geolocation not supported');
+        setLatitude(37.7749);
+        setLongitude(-122.4194);
+        setLocation('San Francisco, US (Default)');
+        setIsLocating(false);
+        setGeoError('Your browser does not support geolocation. Using default location.');
+        fetchRealTimeAQI(37.7749, -122.4194);
+        return;
+      }
+
+      // 設置定位超時（10秒）
+      const timeoutId = setTimeout(() => {
+        console.warn('Geolocation timeout');
+        setLatitude(37.7749);
+        setLongitude(-122.4194);
+        setLocation('San Francisco, US (Default)');
+        setIsLocating(false);
+        setGeoError('Location request timed out. Using default location.');
+        fetchRealTimeAQI(37.7749, -122.4194);
+      }, 10000);
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          clearTimeout(timeoutId);
+          const { latitude, longitude } = position.coords;
+          console.log('✅ Location detected:', { latitude, longitude });
+          setLatitude(latitude);
+          setLongitude(longitude);
+          setLocation(`Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`);
+          setIsLocating(false);
+          setGeoError(null);
+          setLocationPermissionDenied(false);
+          fetchRealTimeAQI(latitude, longitude);
+        },
+        (error) => {
+          clearTimeout(timeoutId);
+          console.error('Geolocation error:', error);
+          
+          let errorMessage = 'Unable to detect your location. ';
+          
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              errorMessage += 'Location access was denied. Please enable location permissions in your browser settings.';
+              setLocationPermissionDenied(true);
+              break;
+            case error.POSITION_UNAVAILABLE:
+              errorMessage += 'Location information is unavailable.';
+              break;
+            case error.TIMEOUT:
+              errorMessage += 'Location request timed out.';
+              break;
+            default:
+              errorMessage += 'An unknown error occurred.';
+          }
+          
+          setLatitude(37.7749);
+          setLongitude(-122.4194);
+          setLocation('San Francisco, US (Default)');
+          setIsLocating(false);
+          setGeoError(errorMessage);
+          fetchRealTimeAQI(37.7749, -122.4194);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
+        }
+      );
+    };
+
+    getUserLocation();
   }, []);
 
   const toggleTheme = () => {
@@ -85,23 +165,60 @@ export default function App() {
     }
     setIsLocating(true);
     setGeoError(null);
+    setLocationPermissionDenied(false);
+    
+    const timeoutId = setTimeout(() => {
+      setGeoError('Location request timed out. Please try again.');
+      setIsLocating(false);
+    }, 10000);
+    
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        clearTimeout(timeoutId);
         const { latitude, longitude } = position.coords;
         setLatitude(latitude);
         setLongitude(longitude);
         setLocation(`Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`);
         setIsLocating(false);
+        setLocationPermissionDenied(false);
         fetchRealTimeAQI(latitude, longitude);
       },
       (error) => {
-        setGeoError(`Unable to retrieve your location: ${error.message}`);
+        clearTimeout(timeoutId);
+        let errorMessage = 'Unable to retrieve your location. ';
+        
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            errorMessage += 'Please enable location permissions.';
+            setLocationPermissionDenied(true);
+            break;
+          case error.POSITION_UNAVAILABLE:
+            errorMessage += 'Location information is unavailable.';
+            break;
+          case error.TIMEOUT:
+            errorMessage += 'Request timed out.';
+            break;
+          default:
+            errorMessage += error.message;
+        }
+        
+        setGeoError(errorMessage);
         setIsLocating(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
       }
     );
   };
   
   useEffect(() => {
+    // 只有當經緯度有效時才獲取空氣質量數據
+    if (latitude === null || longitude === null) {
+      return;
+    }
+
     const fetchAirQualityData = async () => {
       setIsDataLoading(true);
       setGeoError(null);
@@ -184,7 +301,16 @@ export default function App() {
             AeroGuard
           </h1>
           <LoadingSpinner size="h-12 w-12" />
-          <p className="mt-6 text-slate-600 dark:text-slate-300 text-lg">Fetching air quality data...</p>
+          <p className="mt-6 text-slate-600 dark:text-slate-300 text-lg">
+            {isLocating ? 'Detecting your location...' : 'Fetching air quality data...'}
+          </p>
+          {locationPermissionDenied && (
+            <div className="mt-4 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl max-w-md mx-auto">
+              <p className="text-sm text-amber-800 dark:text-amber-300">
+                💡 Tip: Enable location access in your browser settings for accurate local data
+              </p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -233,7 +359,15 @@ export default function App() {
                 
                 {geoError && (
                   <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
-                    <p className="text-sm text-red-600 dark:text-red-400">{geoError}</p>
+                    <p className="text-sm text-red-600 dark:text-red-400 mb-2">{geoError}</p>
+                    {locationPermissionDenied && (
+                      <button
+                        onClick={handleGeolocate}
+                        className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-200 underline"
+                      >
+                        Try again
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
