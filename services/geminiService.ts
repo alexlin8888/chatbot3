@@ -315,63 +315,38 @@ export const generateAirStoryForChild = async (
   }
 };
 
-// 🎯 修改: 移除 Imagen,使用佔位圖片
-export const generateImageFromStory = async (storyText: string): Promise<string | null> => {
-    if (!storyText || !storyText.trim()) {
-      return null;
-    }
+// 🎯 修改: 使用預先生成的插圖（因 Imagen API 需要計費）
+export const generateImageFromStory = async (
+  storyText: string,
+  avgAQI?: number
+): Promise<string | null> => {
+  if (!storyText || !storyText.trim()) {
+    return null;
+  }
 
-    console.log('Note: Imagen API requires billing. Using placeholder image instead.');
-    
-    // 返回一個漂亮的佔位 SVG 圖片
-    const placeholderSVG = `
-      <svg width="800" height="450" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="sky" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" style="stop-color:#87CEEB;stop-opacity:1" />
-            <stop offset="100%" style="stop-color:#E0F6FF;stop-opacity:1" />
-          </linearGradient>
-        </defs>
-        <rect width="800" height="450" fill="url(#sky)"/>
-        
-        <!-- 雲朵 -->
-        <ellipse cx="150" cy="100" rx="60" ry="35" fill="white" opacity="0.8"/>
-        <ellipse cx="120" cy="110" rx="50" ry="30" fill="white" opacity="0.8"/>
-        <ellipse cx="180" cy="105" rx="45" ry="25" fill="white" opacity="0.8"/>
-        
-        <ellipse cx="600" cy="80" rx="70" ry="40" fill="white" opacity="0.7"/>
-        <ellipse cx="560" cy="90" rx="55" ry="32" fill="white" opacity="0.7"/>
-        <ellipse cx="640" cy="85" rx="50" ry="28" fill="white" opacity="0.7"/>
-        
-        <!-- 太陽 -->
-        <circle cx="650" cy="120" r="45" fill="#FFD700" opacity="0.9"/>
-        <circle cx="650" cy="120" r="35" fill="#FFA500" opacity="0.6"/>
-        
-        <!-- 地面 -->
-        <rect y="350" width="800" height="100" fill="#90EE90"/>
-        
-        <!-- 樹木 -->
-        <rect x="100" y="280" width="30" height="70" fill="#8B4513"/>
-        <circle cx="115" cy="260" r="50" fill="#228B22"/>
-        <circle cx="90" cy="270" r="40" fill="#32CD32"/>
-        <circle cx="140" cy="270" r="40" fill="#32CD32"/>
-        
-        <rect x="500" y="290" width="25" height="60" fill="#8B4513"/>
-        <circle cx="512" cy="270" r="45" fill="#228B22"/>
-        <circle cx="490" cy="280" r="35" fill="#32CD32"/>
-        <circle cx="535" cy="280" r="35" fill="#32CD32"/>
-        
-        <!-- 文字 -->
-        <text x="400" y="420" font-family="Arial, sans-serif" font-size="20" fill="#333" text-anchor="middle">
-          ✨ Air Story Illustration ✨
-        </text>
-        <text x="400" y="440" font-family="Arial, sans-serif" font-size="14" fill="#666" text-anchor="middle">
-          (Imagen API requires billing - using placeholder)
-        </text>
-      </svg>
-    `;
-    
-    // 將 SVG 轉換為 data URL
-    const encodedSVG = encodeURIComponent(placeholderSVG);
-    return `data:image/svg+xml,${encodedSVG}`;
+  console.log('📸 Loading pre-generated illustration based on AQI:', avgAQI);
+
+  // 根據 AQI 級別選擇對應圖片
+  let imageName = 'moderate.png';
+  
+  if (avgAQI !== undefined) {
+    if (avgAQI <= 50) {
+      imageName = 'excellent.png';
+    } else if (avgAQI <= 100) {
+      imageName = 'moderate.png';
+    } else if (avgAQI <= 150) {
+      imageName = 'sensitive.png';
+    } else if (avgAQI <= 200) {
+      imageName = 'unhealthy.png';
+    } else if (avgAQI <= 300) {
+      imageName = 'very-unhealthy.png';
+    } else {
+      imageName = 'hazardous.png';
+    }
+  }
+
+  const imagePath = `/aqi-images/${imageName}`;
+  console.log(`✅ Selected image: ${imagePath} for AQI: ${avgAQI}`);
+  
+  return imagePath;
 };
