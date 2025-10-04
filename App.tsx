@@ -517,12 +517,27 @@ export default function App() {
               </p>
               
               {loading.storyImage ? (
-                <div className="flex justify-center items-center h-64 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-700/30 dark:to-slate-700/50 rounded-2xl">
-                  <LoadingSpinner />
-                </div>
-              ) : airStoryImage ? (
-                <img src={airStoryImage} alt="Air story illustration" className="rounded-2xl mb-6 w-full object-cover aspect-video shadow-lg" />
-              ) : (
+  <div className="flex justify-center items-center h-64 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-700/30 dark:to-slate-700/50 rounded-2xl">
+    <LoadingSpinner />
+  </div>
+) : airStoryImage ? (
+  <div className="relative mb-6">
+    <img 
+      src={airStoryImage} 
+      alt="Air story illustration" 
+      className="rounded-2xl w-full object-cover aspect-video shadow-lg" 
+    />
+    {/* 右下角標籤 */}
+    <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-lg shadow-lg border border-white/20">
+      <span className="flex items-center gap-1.5">
+        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span>Pre-generated (Imagen API requires billing)</span>
+      </span>
+    </div>
+  </div>
+) : (
                 !airStory && !loading.story && 
                 <div className="flex justify-center items-center h-64 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-700/30 dark:to-slate-700/50 rounded-2xl mb-6">
                   <div className="text-center">
