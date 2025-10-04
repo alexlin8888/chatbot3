@@ -55,7 +55,7 @@ export default function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-const fetchRealTimeAQI = async (lat: number, lon: number) => {
+  const fetchRealTimeAQI = async (lat: number, lon: number) => {
     setRealTimeLoading(true);
     setRealTimeError(null);
     try {
@@ -70,25 +70,6 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
     }
   };
 
-  // --- Fetch Real-time AQI ---
-  // useEffect(() => {
-  //   const fetchRealTimeAQI = async () => {
-  //     setRealTimeLoading(true);
-  //     try {
-  //       const res = await fetch(`https://realtime-aqi-2381.onrender.com/get_aqi?lat=22.62&lon=120.27`);
-  //       if (!res.ok) throw new Error("Flask API failed");
-  //       const json = await res.json();
-  //       setRealTimeData(json);
-  //     } catch (err: any) {
-  //       setRealTimeError(err.message);
-  //     } finally {
-  //       setRealTimeLoading(false);
-  //     }
-  //   };
-  //   fetchRealTimeAQI();
-  // }, []);
-
-  // 預設進入頁面時用舊金山座標抓 AQI
   useEffect(() => {
     fetchRealTimeAQI(latitude, longitude);
   }, []);
@@ -106,17 +87,11 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
     setGeoError(null);
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        // setLatitude(position.coords.latitude);
-        // setLongitude(position.coords.longitude);
-        // setIsLocating(false);
-
         const { latitude, longitude } = position.coords;
         setLatitude(latitude);
         setLongitude(longitude);
         setLocation(`Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`);
         setIsLocating(false);
-
-        // 用新座標抓 AQI
         fetchRealTimeAQI(latitude, longitude);
       },
       (error) => {
@@ -217,7 +192,6 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-slate-900 dark:via-slate-800 dark:to-indigo-950 font-sans">
-      {/* Decorative background elements */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-300/20 dark:bg-blue-500/10 rounded-full blur-3xl"></div>
         <div className="absolute top-1/2 -left-40 w-80 h-80 bg-purple-300/20 dark:bg-purple-500/10 rounded-full blur-3xl"></div>
@@ -225,7 +199,6 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
       </div>
 
       <main className="relative max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
-        {/* Header */}
         <header className="mb-8">
           <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl rounded-3xl shadow-xl border border-white/20 dark:border-slate-700/50 p-6">
             <div className="flex justify-between items-start">
@@ -270,7 +243,6 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
           </div>
         </header>
 
-        {/* AI Generate Button */}
         <div className="mb-8">
           <button
             onClick={fetchGeminiData}
@@ -288,9 +260,7 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
           </button>
         </div>
 
-        {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column */}
           <div className="lg:col-span-1 flex flex-col gap-6">
             {currentAQI ? (
               <AQIIndicator aqi={currentAQI.aqi} />
@@ -330,7 +300,6 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
             </Card>
           </div>
 
-          {/* Right Column */}
           <div className="lg:col-span-2 space-y-6">
             {hourlyForecast.length > 0 ? (
               <ForecastChart data={hourlyForecast} />
@@ -378,7 +347,6 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
             </Card>
           </div>
           
-          {/* Full Width Sections */}
           <div className="lg:col-span-3">
             {historicalData.length > 0 ? (
               <HistoryChart data={historicalData} />
@@ -429,7 +397,6 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
             </Card>
           </div>
           
-          {/* Footer */}
           <footer className="lg:col-span-3 mt-8 text-center">
             <div className="bg-white/50 dark:bg-slate-800/50 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 rounded-2xl p-6">
               <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">
