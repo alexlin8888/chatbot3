@@ -444,4 +444,3 @@ const fetchRealTimeAQI = async (lat: number, lon: number) => {
       </main>
     </div>
   );
-}
