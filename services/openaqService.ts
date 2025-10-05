@@ -1,5 +1,6 @@
 import type { AQIDataPoint, HourlyForecastData, HistoricalDataPoint, Pollutant } from '../types';
 import { Pollutant as PollutantEnum } from '../types';
+import { generateAQIForecast } from './geminiService';
 
 // Python API 端點
 const PYTHON_API_URL = '/api/airquality';
@@ -12,7 +13,7 @@ const mapParameterToPollutant = (parameter: string): Pollutant => {
     case 'PM2.5':
       return PollutantEnum.PM25;
     case 'PM10':
-      return PollutantEnum.PM25; // 注意：這裡保持與之前一致，但可以考慮修改
+      return PollutantEnum.PM10;
     case 'O3':
       return PollutantEnum.O3;
     case 'NO2':
@@ -116,17 +117,15 @@ export const getHistoricalData = async (
   }
 };
 
-import { generateAQIForecast } from './geminiService';
-
+// 獲取預測數據（使用 Gemini AI + 緩存）
 export const getForecastData = async (
   latitude: number,
   longitude: number,
-  realTimeData?: any  // 可選：來自 Flask API 的即時數據
+  realTimeData?: any
 ): Promise<HourlyForecastData[]> => {
   try {
     console.log('🤖 使用 Gemini AI 進行空氣質量預測...');
     
-    // 獲取當前 AQI
     const latest = await getLatestMeasurements(latitude, longitude);
     
     if (!latest) {
@@ -134,24 +133,21 @@ export const getForecastData = async (
       return [];
     }
 
-    // 獲取地點名稱
     const locationName = await getLocationName(latitude, longitude);
     
-    // 使用 Gemini AI 進行預測
     try {
+      // 使用帶緩存的 AI 預測
       const forecast = await generateAQIForecast(
         latest,
         { lat: latitude, lon: longitude, name: locationName },
-        realTimeData  // 傳入即時數據（如果有）
+        realTimeData
       );
       
-      console.log(`✅ AI 成功預測 ${forecast.length} 小時數據`);
+      console.log(`✅ AI 預測完成，返回 ${forecast.length} 小時數據`);
       return forecast;
       
     } catch (aiError) {
       console.error('⚠️ AI 預測失敗，使用後備模型', aiError);
-      
-      // 後備方案：使用原本的科學化模型
       return generateFallbackForecast(latest, latitude, longitude);
     }
     
@@ -161,7 +157,7 @@ export const getForecastData = async (
   }
 };
 
-// 保留原本的科學化模型作為後備方案
+// 後備預測模型
 function generateFallbackForecast(
   latest: AQIDataPoint,
   latitude: number,
@@ -177,7 +173,6 @@ function generateFallbackForecast(
     const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
     const hourOfDay = hour.getHours();
     
-    // 簡化的預測邏輯
     const timePhase = (hourOfDay / 24) * 2 * Math.PI;
     const dailyCycle = Math.sin(timePhase - Math.PI/2);
     const dailyFactor = 1 + (dailyCycle * 0.15);
@@ -208,12 +203,11 @@ function generateFallbackForecast(
   return forecastData;
 }
 
-// 地點名稱 - 從 Python API 結果中獲取
+// 地點名稱
 let cachedLocationName: string | null = null;
 
 export const getLocationName = async (latitude: number, longitude: number): Promise<string> => {
   try {
-    // 清除快取（當座標改變時）
     cachedLocationName = null;
 
     const response = await fetch(`${PYTHON_API_URL}?lat=${latitude}&lon=${longitude}`);
