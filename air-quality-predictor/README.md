@@ -9,7 +9,6 @@ It is configured to use the OpenAQ V3 API to fetch the latest air quality readin
 The core logic involves loading pre-trained XGBoost regression models for various pollutants (PM2.5, PM10, O3, NO2, SO2, CO), generating forecasts, 
   calculating the maximum AQI based on standard breakpoints, and rendering the results on a webpage. 
 It includes robust error handling, location initialization, and a fallback mechanism to display the latest observed AQI if the prediction fails.
-If the nearest station doesn't contain the latest PM2.5 data that's valid, it will go back to the default station, Kaohsiung.
 
 train_and_save.py
 
