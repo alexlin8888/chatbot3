@@ -531,12 +531,12 @@ export default function App() {
                   <LoadingSpinner />
                 </div>
               ) : airStoryImage ? (
-                <div className="relative mb-6">
-                  <img 
-                    src={airStoryImage} 
-                    alt="Air story illustration" 
-                    className="rounded-2xl w-full object-cover aspect-video shadow-lg" 
-                  />
+  <div className="relative mb-6 max-w-2xl mx-auto">
+    <img 
+      src={airStoryImage} 
+      alt="Air story illustration" 
+      className="rounded-2xl w-full object-contain aspect-square shadow-lg bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-700/30 dark:to-slate-700/50" 
+    />
                   <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-lg shadow-lg border border-white/20">
                     <span className="flex items-center gap-1.5">
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
