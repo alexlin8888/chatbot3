@@ -483,16 +483,14 @@ export default function App() {
               ) : healthAdvice ? (
                 <p className="leading-relaxed">{healthAdvice}</p>
               ) : (
-                <div className="text-center py-4 min-h-[235px]">
-                  <div className="flex items-center justify-center gap-3">
-                    <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700/50 rounded-xl flex items-center justify-center">
-                      <HeartIcon />
-                    </div>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">
-                      {!currentAQI ? "Current air quality data is unavailable." : "Click 'Generate AI Insights' for personalized advice."}
-                    </p>
-                  </div>
-                </div>
+                <div className="text-center py-6">
+  <div className="w-12 h-12 bg-slate-100 dark:bg-slate-700/50 rounded-xl flex items-center justify-center mx-auto mb-3">
+    <HeartIcon />
+  </div>
+  <p className="text-sm text-slate-500 dark:text-slate-400">
+    {!currentAQI ? "Current air quality data is unavailable." : "Click 'Generate AI Insights' for personalized advice."}
+  </p>
+</div>
               )}
             </Card>
           </div>
