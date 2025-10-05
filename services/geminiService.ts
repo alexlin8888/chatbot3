@@ -350,3 +350,131 @@ export const generateImageFromStory = async (
   
   return imagePath;
 };
+
+
+
+
+export const generateAQIForecast = async (
+  currentAQI: AQIDataPoint,
+  location: { lat: number; lon: number; name?: string },
+  realTimeData?: any  // 來自 Flask API 的即時數據
+): Promise<HourlyForecastData[]> => {
+  
+  // 準備即時污染物數據
+  const measurements = realTimeData ? {
+    pm25: realTimeData.pm25,
+    pm10: realTimeData.pm10,
+    no2: realTimeData.no2,
+    o3: realTimeData.o3,
+    so2: realTimeData.so2,
+    co: realTimeData.co,
+  } : {};
+
+  const now = new Date();
+  const currentHour = now.getHours();
+  
+  const prompt = `
+You are an air quality prediction expert with deep knowledge of atmospheric science and pollution patterns. Based on the current air quality data, predict the AQI for the next 12 hours.
+
+**Current Data:**
+- Location: ${location.name || `Lat: ${location.lat.toFixed(4)}, Lon: ${location.lon.toFixed(4)}`}
+- Current Time: ${now.toLocaleString()} (Hour: ${currentHour})
+- Current AQI: ${currentAQI.aqi}
+- Main Pollutant: ${currentAQI.pollutant}
+- ${currentAQI.pollutant} Concentration: ${currentAQI.concentration.toFixed(2)} µg/m³
+
+**Real-time Measurements:**
+${measurements.pm25 !== undefined ? `- PM2.5: ${measurements.pm25.toFixed(2)} µg/m³` : ''}
+${measurements.pm10 !== undefined ? `- PM10: ${measurements.pm10.toFixed(2)} µg/m³` : ''}
+${measurements.o3 !== undefined ? `- O₃: ${measurements.o3.toFixed(3)} ppm` : ''}
+${measurements.no2 !== undefined ? `- NO₂: ${measurements.no2.toFixed(3)} ppm` : ''}
+${measurements.so2 !== undefined ? `- SO₂: ${measurements.so2.toFixed(3)} ppm` : ''}
+${measurements.co !== undefined ? `- CO: ${measurements.co.toFixed(2)} ppm` : ''}
+
+**Prediction Requirements:**
+Predict hourly AQI for the next 12 hours considering:
+
+1. **Daily Patterns:**
+   - Morning rush hour (7-9 AM): Traffic increases, AQI typically rises
+   - Midday (10 AM-2 PM): Solar heating affects O₃ formation
+   - Evening rush hour (5-7 PM): Peak traffic, highest AQI
+   - Night (10 PM-5 AM): Lower traffic, AQI decreases
+
+2. **Pollutant-Specific Behavior:**
+   - PM2.5/PM10: Accumulates in stable air, disperses with wind
+   - O₃: Increases with sunlight, peaks in afternoon
+   - NO₂: Follows traffic patterns closely
+   - SO₂/CO: Industrial and traffic sources
+
+3. **Meteorological Factors:**
+   - Temperature inversion can trap pollutants
+   - Wind dispersion typically improves air quality
+   - Humidity affects PM accumulation
+
+4. **Location Context:**
+   - Urban areas: Consider traffic density
+   - Industrial zones: Factor in emissions
+   - Coastal areas: Sea breeze effects
+
+**Output Format:**
+Provide predictions for each of the next 12 hours with realistic variations.
+`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              hour: { 
+                type: Type.STRING, 
+                description: 'Time in 12-hour format (e.g., "3 PM", "11 AM")' 
+              },
+              aqi: { 
+                type: Type.INTEGER, 
+                description: 'Predicted AQI value (0-500)' 
+              },
+              pollutant: { 
+                type: Type.STRING, 
+                description: 'Main pollutant: PM₂.₅, PM10, O₃, NO₂, SO₂, or CO' 
+              },
+              concentration: { 
+                type: Type.NUMBER, 
+                description: 'Estimated pollutant concentration' 
+              },
+              timestamp: { 
+                type: Type.STRING, 
+                description: 'ISO 8601 timestamp for that hour' 
+              }
+            },
+            required: ['hour', 'aqi', 'pollutant', 'concentration', 'timestamp']
+          }
+        }
+      }
+    });
+
+    const responseText = response.text || '';
+    if (!responseText.trim()) {
+      throw new Error('Empty forecast response from Gemini API');
+    }
+    
+    const forecast = JSON.parse(responseText) as HourlyForecastData[];
+    
+    console.log('✅ Gemini AI 預測成功:', {
+      hoursGenerated: forecast.length,
+      aqiRange: `${Math.min(...forecast.map(f => f.aqi))} - ${Math.max(...forecast.map(f => f.aqi))}`,
+      mainPollutants: [...new Set(forecast.map(f => f.pollutant))]
+    });
+    
+    return forecast;
+    
+  } catch (error) {
+    console.error("❌ Gemini AI 預測失敗:", error);
+    throw error;
+  }
+};
