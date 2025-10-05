@@ -1,4 +1,4 @@
-Using Render to run - WebSite: https://air-quality-predictor-y8se.onrender.com
+Running on Render - WebSite: https://air-quality-predictor-y8se.onrender.com
 
 The two Python files form a complete system for air quality prediction: one for training the prediction models and one for running the live web application.
 
