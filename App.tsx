@@ -219,39 +219,39 @@ export default function App() {
       return;
     }
 
-    const fetchAirQualityData = async () => {
-      setIsDataLoading(true);
-      setGeoError(null);
-      setHealthAdvice(null);
-      setSmartSchedule(null);
-      setAirStory(null);
-      setAirStoryImage(null);
+const fetchAirQualityData = async () => {
+  setIsDataLoading(true);
+  setGeoError(null);
+  setHealthAdvice(null);
+  setSmartSchedule(null);
+  setAirStory(null);
+  setAirStoryImage(null);
 
-      try {
-        const [locationName, latest, historical, forecast] = await Promise.all([
-          getLocationName(latitude, longitude),
-          getLatestMeasurements(latitude, longitude),
-          getHistoricalData(latitude, longitude),
-          getForecastData(latitude, longitude),
-        ]);
+  try {
+    const [locationName, latest, historical] = await Promise.all([
+      getLocationName(latitude, longitude),
+      getLatestMeasurements(latitude, longitude),
+      getHistoricalData(latitude, longitude),
+    ]);
 
-        setLocation(locationName);
-        setCurrentAQI(latest);
-        setHistoricalData(historical);
-        setHourlyForecast(forecast);
-        
-        if (!latest) {
-          setGeoError("Could not retrieve air quality data. The nearest station may be offline or too far away.");
-        }
-      } catch (error) {
-        console.error("Failed to fetch air quality data:", error);
-        setGeoError("An error occurred while fetching air quality data.");
-      } finally {
-        setIsDataLoading(false);
-      }
-    };
-    fetchAirQualityData();
-  }, [latitude, longitude]);
+    setLocation(locationName);
+    setCurrentAQI(latest);
+    setHistoricalData(historical);
+    
+    // ✨ 傳入 realTimeData 給預測函數
+    const forecast = await getForecastData(latitude, longitude, realTimeData);
+    setHourlyForecast(forecast);
+    
+    if (!latest) {
+      setGeoError("Could not retrieve air quality data. The nearest station may be offline or too far away.");
+    }
+  } catch (error) {
+    console.error("Failed to fetch air quality data:", error);
+    setGeoError("An error occurred while fetching air quality data.");
+  } finally {
+    setIsDataLoading(false);
+  }
+};
 
   const fetchGeminiData = useCallback(async () => {
     if (!currentAQI || hourlyForecast.length === 0 || historicalData.length === 0) return;
