@@ -50,32 +50,75 @@ export default function App() {
   const [isDataLoading, setIsDataLoading] = useState(true);
   const [loading, setLoading] = useState({ advice: false, schedule: false, story: false, storyImage: false });
 
+  // Theme effect
   useEffect(() => {
     if (theme === 'dark') document.documentElement.classList.add('dark');
     else document.documentElement.classList.remove('dark');
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  const fetchRealTimeAQI = async (lat: number, lon: number) => {
+  // 獲取 Flask API 即時數據
+  const fetchRealTimeAQI = useCallback(async (lat: number, lon: number) => {
     setRealTimeLoading(true);
     setRealTimeError(null);
     try {
+      console.log('🐍 呼叫 Flask API...');
       const res = await fetch(`https://realtime-aqi-2381.onrender.com/get_aqi?lat=${lat}&lon=${lon}`);
       if (!res.ok) throw new Error("Flask API failed");
       const json = await res.json();
+      console.log('✅ Flask API 成功:', json);
       setRealTimeData(json);
     } catch (err: any) {
+      console.error('❌ Flask API 失敗:', err);
       setRealTimeError(err.message);
     } finally {
       setRealTimeLoading(false);
     }
-  };
-
-  useEffect(() => {
-    if (latitude !== null && longitude !== null) {
-      fetchRealTimeAQI(latitude, longitude);
-    }
   }, []);
+
+  // 獲取完整空氣質量數據（包含 AI 預測）
+  const fetchAirQualityData = useCallback(async () => {
+    if (latitude === null || longitude === null) {
+      return;
+    }
+
+    setIsDataLoading(true);
+    setGeoError(null);
+    setHealthAdvice(null);
+    setSmartSchedule(null);
+    setAirStory(null);
+    setAirStoryImage(null);
+
+    try {
+      console.log('📍 開始獲取空氣質量數據...');
+      
+      const [locationName, latest, historical] = await Promise.all([
+        getLocationName(latitude, longitude),
+        getLatestMeasurements(latitude, longitude),
+        getHistoricalData(latitude, longitude),
+      ]);
+
+      setLocation(locationName);
+      setCurrentAQI(latest);
+      setHistoricalData(historical);
+      
+      // 🤖 使用 Gemini AI 預測（傳入即時數據）
+      console.log('🤖 開始 AI 預測，realTimeData 可用:', !!realTimeData);
+      const forecast = await getForecastData(latitude, longitude, realTimeData);
+      setHourlyForecast(forecast);
+      
+      if (!latest) {
+        setGeoError("Could not retrieve air quality data. The nearest station may be offline or too far away.");
+      } else {
+        console.log('✅ 空氣質量數據獲取成功');
+      }
+    } catch (error) {
+      console.error("❌ 獲取空氣質量數據失敗:", error);
+      setGeoError("An error occurred while fetching air quality data.");
+    } finally {
+      setIsDataLoading(false);
+    }
+  }, [latitude, longitude, realTimeData]);
 
   // 自動獲取使用者位置
   useEffect(() => {
@@ -87,11 +130,9 @@ export default function App() {
         setLocation('San Francisco, US (Default)');
         setIsLocating(false);
         setGeoError('Your browser does not support geolocation. Using default location.');
-        fetchRealTimeAQI(37.7749, -122.4194);
         return;
       }
 
-      // 設置定位超時（10秒）
       const timeoutId = setTimeout(() => {
         console.warn('Geolocation timeout');
         setLatitude(37.7749);
@@ -99,7 +140,6 @@ export default function App() {
         setLocation('San Francisco, US (Default)');
         setIsLocating(false);
         setGeoError('Location request timed out. Using default location.');
-        fetchRealTimeAQI(37.7749, -122.4194);
       }, 10000);
 
       navigator.geolocation.getCurrentPosition(
@@ -113,7 +153,6 @@ export default function App() {
           setIsLocating(false);
           setGeoError(null);
           setLocationPermissionDenied(false);
-          fetchRealTimeAQI(latitude, longitude);
         },
         (error) => {
           clearTimeout(timeoutId);
@@ -141,7 +180,6 @@ export default function App() {
           setLocation('San Francisco, US (Default)');
           setIsLocating(false);
           setGeoError(errorMessage);
-          fetchRealTimeAQI(37.7749, -122.4194);
         },
         {
           enableHighAccuracy: true,
@@ -153,6 +191,22 @@ export default function App() {
 
     getUserLocation();
   }, []);
+
+  // 當位置變化時，先獲取即時數據
+  useEffect(() => {
+    if (latitude !== null && longitude !== null) {
+      console.log('🌍 位置已更新，開始獲取即時數據');
+      fetchRealTimeAQI(latitude, longitude);
+    }
+  }, [latitude, longitude, fetchRealTimeAQI]);
+
+  // 當即時數據就緒後，獲取完整數據
+  useEffect(() => {
+    if (realTimeData && latitude !== null && longitude !== null) {
+      console.log('📊 即時數據已就緒，開始完整數據獲取');
+      fetchAirQualityData();
+    }
+  }, [realTimeData, fetchAirQualityData]);
 
   const toggleTheme = () => {
     setTheme(prevTheme => (prevTheme === 'light' ? 'dark' : 'light'));
@@ -181,7 +235,6 @@ export default function App() {
         setLocation(`Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`);
         setIsLocating(false);
         setLocationPermissionDenied(false);
-        fetchRealTimeAQI(latitude, longitude);
       },
       (error) => {
         clearTimeout(timeoutId);
@@ -212,46 +265,6 @@ export default function App() {
       }
     );
   };
-  
-  useEffect(() => {
-    // 只有當經緯度有效時才獲取空氣質量數據
-    if (latitude === null || longitude === null) {
-      return;
-    }
-
-const fetchAirQualityData = async () => {
-  setIsDataLoading(true);
-  setGeoError(null);
-  setHealthAdvice(null);
-  setSmartSchedule(null);
-  setAirStory(null);
-  setAirStoryImage(null);
-
-  try {
-    const [locationName, latest, historical] = await Promise.all([
-      getLocationName(latitude, longitude),
-      getLatestMeasurements(latitude, longitude),
-      getHistoricalData(latitude, longitude),
-    ]);
-
-    setLocation(locationName);
-    setCurrentAQI(latest);
-    setHistoricalData(historical);
-    
-    // ✨ 傳入 realTimeData 給預測函數
-    const forecast = await getForecastData(latitude, longitude, realTimeData);
-    setHourlyForecast(forecast);
-    
-    if (!latest) {
-      setGeoError("Could not retrieve air quality data. The nearest station may be offline or too far away.");
-    }
-  } catch (error) {
-    console.error("Failed to fetch air quality data:", error);
-    setGeoError("An error occurred while fetching air quality data.");
-  } finally {
-    setIsDataLoading(false);
-  }
-};
 
   const fetchGeminiData = useCallback(async () => {
     if (!currentAQI || hourlyForecast.length === 0 || historicalData.length === 0) return;
@@ -278,13 +291,10 @@ const fetchAirQualityData = async () => {
     setLoading(prev => ({ ...prev, story: false }));
 
     if (story) {
-    // 計算平均 AQI
-    const avgAQI = historicalData.reduce((sum, d) => sum + d.aqi, 0) / historicalData.length;
-    
-    // 傳入 avgAQI 參數
-    const imageUrl = await generateImageFromStory(story, avgAQI);
-    setAirStoryImage(imageUrl);
-}
+      const avgAQI = historicalData.reduce((sum, d) => sum + d.aqi, 0) / historicalData.length;
+      const imageUrl = await generateImageFromStory(story, avgAQI);
+      setAirStoryImage(imageUrl);
+    }
     setLoading(prev => ({ ...prev, storyImage: false }));
   }, [currentAQI, userProfile, hourlyForecast, location, historicalData]);
   
@@ -398,7 +408,7 @@ const fetchAirQualityData = async () => {
           </button>
         </div>
 
-       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 flex flex-col gap-6">
             {currentAQI ? (
               <AQIIndicator aqi={currentAQI.aqi} />
@@ -425,7 +435,7 @@ const fetchAirQualityData = async () => {
             {hourlyForecast.length > 0 ? (
               <ForecastChart data={hourlyForecast} />
             ) : (
-              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 p-6 rounded-3xl shadow-xl h-80 flex justify-center items-center  min-h-[344px]">
+              <div className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-xl border border-white/20 dark:border-slate-700/50 p-6 rounded-3xl shadow-xl h-80 flex justify-center items-center min-h-[344px]">
                 <p className="text-slate-500 dark:text-slate-400">Forecast data unavailable.</p>
               </div>
             )}
@@ -436,7 +446,7 @@ const fetchAirQualityData = async () => {
               ) : smartSchedule ? (
                 <div className="space-y-3">
                   {smartSchedule.map((item, index) => (
-                    <div key={index} className="group p-4 bg-gradient-to-r from-slate-50 to-slate-100/50 dark:from-slate-700/30 dark:to-slate-700/50 hover:from-slate-100 hover:to-slate-50 dark:hover:from-slate-700/50 dark:hover:to-slate-700/30 rounded-xl transition-all border border-slate-200/50 dark:border-slate-600/50 min-h-[344px]">
+                    <div key={index} className="group p-4 bg-gradient-to-r from-slate-50 to-slate-100/50 dark:from-slate-700/30 dark:to-slate-700/50 hover:from-slate-100 hover:to-slate-50 dark:hover:from-slate-700/50 dark:hover:to-slate-700/30 rounded-xl transition-all border border-slate-200/50 dark:border-slate-600/50">
                       <div className="flex items-start gap-3">
                         <div className={`w-3 h-3 rounded-full mt-1.5 flex-shrink-0 shadow-lg ${
                           item.health_risk === 'Low' ? 'bg-green-500' : 
@@ -488,27 +498,27 @@ const fetchAirQualityData = async () => {
           </div>
           
           <div className="lg:col-span-3">
-  <a 
-    href="https://air-quality-predictor-y8se.onrender.com" 
-    target="_blank" 
-    rel="noopener noreferrer"
-    className="block w-full group relative overflow-hidden bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-700 hover:via-teal-700 hover:to-cyan-700 text-white font-bold py-6 px-8 rounded-2xl transition-all duration-300 shadow-xl hover:shadow-2xl transform hover:-translate-y-0.5"
-  >
-    <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
-    <div className="relative flex items-center justify-center gap-3">
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-      </svg>
-      <span className="text-xl">Advanced Air Quality Predictions</span>
-      <svg className="w-5 h-5 transition-transform group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-      </svg>
-    </div>
-    <p className="relative text-center text-sm mt-2 opacity-90">
-      Explore detailed forecasting powered by machine learning
-    </p>
-  </a>
-</div>
+            <a 
+              href="https://air-quality-predictor-y8se.onrender.com" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="block w-full group relative overflow-hidden bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-700 hover:via-teal-700 hover:to-cyan-700 text-white font-bold py-6 px-8 rounded-2xl transition-all duration-300 shadow-xl hover:shadow-2xl transform hover:-translate-y-0.5"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+              <div className="relative flex items-center justify-center gap-3">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                <span className="text-xl">Advanced Air Quality Predictions</span>
+                <svg className="w-5 h-5 transition-transform group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+              </div>
+              <p className="relative text-center text-sm mt-2 opacity-90">
+                Explore detailed forecasting powered by machine learning
+              </p>
+            </a>
+          </div>
 
           <div className="lg:col-span-3">
             <Card title="Air Story Mode" icon={<BookOpenIcon />}>
@@ -517,27 +527,26 @@ const fetchAirQualityData = async () => {
               </p>
               
               {loading.storyImage ? (
-  <div className="flex justify-center items-center h-64 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-700/30 dark:to-slate-700/50 rounded-2xl">
-    <LoadingSpinner />
-  </div>
-) : airStoryImage ? (
-  <div className="relative mb-6">
-    <img 
-      src={airStoryImage} 
-      alt="Air story illustration" 
-      className="rounded-2xl w-full object-cover aspect-video shadow-lg" 
-    />
-    {/* 右下角標籤 */}
-    <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-lg shadow-lg border border-white/20">
-      <span className="flex items-center gap-1.5">
-        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <span>Pre-generated (Imagen API requires billing)</span>
-      </span>
-    </div>
-  </div>
-) : (
+                <div className="flex justify-center items-center h-64 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-700/30 dark:to-slate-700/50 rounded-2xl">
+                  <LoadingSpinner />
+                </div>
+              ) : airStoryImage ? (
+                <div className="relative mb-6">
+                  <img 
+                    src={airStoryImage} 
+                    alt="Air story illustration" 
+                    className="rounded-2xl w-full object-cover aspect-video shadow-lg" 
+                  />
+                  <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-lg shadow-lg border border-white/20">
+                    <span className="flex items-center gap-1.5">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Pre-generated (Imagen API requires billing)</span>
+                    </span>
+                  </div>
+                </div>
+              ) : (
                 !airStory && !loading.story && 
                 <div className="flex justify-center items-center h-64 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-slate-700/30 dark:to-slate-700/50 rounded-2xl mb-6">
                   <div className="text-center">
