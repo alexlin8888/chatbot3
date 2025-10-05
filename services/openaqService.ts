@@ -116,127 +116,97 @@ export const getHistoricalData = async (
   }
 };
 
-/**
- * 科學化的 AQI 預測模型
- * 考慮多種因素：時段週期、交通模式、氣象影響、歷史趨勢
- */
+import { generateAQIForecast } from './geminiService';
+
 export const getForecastData = async (
   latitude: number,
-  longitude: number
+  longitude: number,
+  realTimeData?: any  // 可選：來自 Flask API 的即時數據
 ): Promise<HourlyForecastData[]> => {
   try {
+    console.log('🤖 使用 Gemini AI 進行空氣質量預測...');
+    
+    // 獲取當前 AQI
     const latest = await getLatestMeasurements(latitude, longitude);
     
     if (!latest) {
-      console.warn('無最新測量數據用於預測');
+      console.warn('❌ 無法獲取當前 AQI，無法進行預測');
       return [];
     }
 
-    const forecastData: HourlyForecastData[] = [];
-    const now = new Date();
-    const baseAQI = latest.aqi;
-
-    console.log('🔬 使用科學化預測模型 - 基準 AQI:', baseAQI);
-
-    for (let i = 0; i < 12; i++) {
-      const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
-      const hourOfDay = hour.getHours();
-      
-      // === 1. 時段週期因素（正弦波模擬） ===
-      // 污染物濃度在一天中呈週期性變化
-      // 凌晨最低，下午最高
-      const timePhase = (hourOfDay / 24) * 2 * Math.PI; // 0-2π
-      const dailyCycle = Math.sin(timePhase - Math.PI/2); // -1 到 1
-      const dailyFactor = 1 + (dailyCycle * 0.15); // 0.85 - 1.15
-      
-      // === 2. 交通尖峰影響 ===
-      let trafficFactor = 1.0;
-      
-      // 早上通勤 (6-9點)
-      if (hourOfDay >= 6 && hourOfDay <= 9) {
-        const morningPeak = Math.sin(((hourOfDay - 6) / 3) * Math.PI);
-        trafficFactor += morningPeak * 0.25; // 最多 +25%
-      }
-      
-      // 晚上通勤 (17-20點)
-      if (hourOfDay >= 17 && hourOfDay <= 20) {
-        const eveningPeak = Math.sin(((hourOfDay - 17) / 3) * Math.PI);
-        trafficFactor += eveningPeak * 0.30; // 最多 +30%
-      }
-      
-      // 深夜交通減少 (0-5點)
-      if (hourOfDay >= 0 && hourOfDay <= 5) {
-        trafficFactor *= 0.7; // -30%
-      }
-      
-      // === 3. 氣象模擬因素 ===
-      // 簡化的氣象影響（溫度、風速、濕度）
-      const meteorologyFactor = 1.0 + (Math.sin(timePhase) * 0.1); // 0.9 - 1.1
-      
-      // === 4. 趨勢因素 ===
-      // 模擬長期趨勢（根據時間推移緩慢變化）
-      const trendFactor = 1.0 + (i * 0.01); // 隨時間微幅上升 1.0 - 1.12
-      
-      // === 5. 小幅隨機波動 ===
-      // 保留自然的不可預測性，但幅度較小
-      const randomFactor = 1.0 + ((Math.random() - 0.5) * 0.1); // 0.95 - 1.05
-      
-      // === 綜合計算預測 AQI ===
-      let predictedAQI = baseAQI 
-        * dailyFactor 
-        * trafficFactor 
-        * meteorologyFactor 
-        * trendFactor 
-        * randomFactor;
-      
-      // === 污染物類型特定調整 ===
-      // PM2.5 在濕度高時會累積
-      if (latest.pollutant === 'PM₂.₅') {
-        const humidityFactor = 1.0 + (Math.sin(timePhase + Math.PI) * 0.08);
-        predictedAQI *= humidityFactor;
-      }
-      
-      // O3 在陽光強時會增加
-      if (latest.pollutant === 'O₃' && hourOfDay >= 10 && hourOfDay <= 16) {
-        predictedAQI *= 1.15; // 中午臭氧濃度較高
-      }
-      
-      // === 邊界限制 ===
-      predictedAQI = Math.max(10, Math.min(500, predictedAQI));
-      predictedAQI = Math.round(predictedAQI);
-      
-      // === 計算對應濃度 ===
-      const concentrationRatio = predictedAQI / baseAQI;
-      const predictedConcentration = latest.concentration * concentrationRatio;
-      
-      // 記錄詳細預測資訊（可選）
-      if (i === 0 || i === 6 || i === 11) {
-        console.log(`⏰ ${hour.toLocaleTimeString('en-US', { hour: 'numeric' })}:`, {
-          baseAQI,
-          daily: dailyFactor.toFixed(2),
-          traffic: trafficFactor.toFixed(2),
-          final: predictedAQI
-        });
-      }
-      
-      forecastData.push({
-        hour: hour.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }),
-        aqi: predictedAQI,
-        pollutant: latest.pollutant,
-        concentration: predictedConcentration,
-        timestamp: hour.toISOString(),
-      });
-    }
-
-    console.log(`✅ 生成 ${forecastData.length} 小時的科學化預測數據`);
-    console.log(`📊 預測範圍: ${Math.min(...forecastData.map(f => f.aqi))} - ${Math.max(...forecastData.map(f => f.aqi))}`);
+    // 獲取地點名稱
+    const locationName = await getLocationName(latitude, longitude);
     
-    return forecastData;
+    // 使用 Gemini AI 進行預測
+    try {
+      const forecast = await generateAQIForecast(
+        latest,
+        { lat: latitude, lon: longitude, name: locationName },
+        realTimeData  // 傳入即時數據（如果有）
+      );
+      
+      console.log(`✅ AI 成功預測 ${forecast.length} 小時數據`);
+      return forecast;
+      
+    } catch (aiError) {
+      console.error('⚠️ AI 預測失敗，使用後備模型', aiError);
+      
+      // 後備方案：使用原本的科學化模型
+      return generateFallbackForecast(latest, latitude, longitude);
+    }
+    
   } catch (error) {
-    console.error('生成預測數據錯誤:', error);
+    console.error('❌ 預測數據生成失敗:', error);
     return [];
   }
 };
+
+// 保留原本的科學化模型作為後備方案
+function generateFallbackForecast(
+  latest: AQIDataPoint,
+  latitude: number,
+  longitude: number
+): HourlyForecastData[] {
+  console.log('🔬 使用後備預測模型...');
+  
+  const forecastData: HourlyForecastData[] = [];
+  const now = new Date();
+  const baseAQI = latest.aqi;
+
+  for (let i = 0; i < 12; i++) {
+    const hour = new Date(now.getTime() + i * 60 * 60 * 1000);
+    const hourOfDay = hour.getHours();
+    
+    // 簡化的預測邏輯
+    const timePhase = (hourOfDay / 24) * 2 * Math.PI;
+    const dailyCycle = Math.sin(timePhase - Math.PI/2);
+    const dailyFactor = 1 + (dailyCycle * 0.15);
+    
+    let trafficFactor = 1.0;
+    if (hourOfDay >= 7 && hourOfDay <= 9) {
+      trafficFactor += 0.2;
+    }
+    if (hourOfDay >= 17 && hourOfDay <= 19) {
+      trafficFactor += 0.25;
+    }
+    
+    let predictedAQI = baseAQI * dailyFactor * trafficFactor;
+    predictedAQI = Math.max(10, Math.min(500, Math.round(predictedAQI)));
+    
+    const concentrationRatio = predictedAQI / baseAQI;
+    const predictedConcentration = latest.concentration * concentrationRatio;
+    
+    forecastData.push({
+      hour: hour.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }),
+      aqi: predictedAQI,
+      pollutant: latest.pollutant,
+      concentration: predictedConcentration,
+      timestamp: hour.toISOString(),
+    });
+  }
+  
+  return forecastData;
+}
 
 // 地點名稱 - 從 Python API 結果中獲取
 let cachedLocationName: string | null = null;
