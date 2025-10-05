@@ -26,6 +26,228 @@ const getGeminiApiKey = (): string => {
 
 const ai = new GoogleGenAI({ apiKey: getGeminiApiKey() });
 
+// ========== 緩存管理系統 ==========
+interface ForecastCache {
+  data: HourlyForecastData[];
+  timestamp: number;
+  location: string;
+  baseAQI: number;
+}
+
+const CACHE_DURATION = 60 * 60 * 1000; // 1 小時緩存
+let forecastCache: ForecastCache | null = null;
+
+// 生成緩存鍵
+function getCacheKey(lat: number, lon: number, aqi: number): string {
+  return `${lat.toFixed(2)}_${lon.toFixed(2)}_${Math.round(aqi / 10) * 10}`;
+}
+
+// 檢查緩存是否有效
+function isCacheValid(cache: ForecastCache | null, currentKey: string): boolean {
+  if (!cache) return false;
+  
+  const now = Date.now();
+  const cacheAge = now - cache.timestamp;
+  
+  // 緩存超過 1 小時失效
+  if (cacheAge > CACHE_DURATION) {
+    console.log('⏰ 緩存已過期 (超過 1 小時)');
+    return false;
+  }
+  
+  // 位置或 AQI 變化時失效
+  if (cache.location !== currentKey) {
+    console.log('📍 位置或 AQI 已變化，緩存失效');
+    return false;
+  }
+  
+  const remainingMinutes = Math.round((CACHE_DURATION - cacheAge) / 1000 / 60);
+  console.log(`✅ 緩存有效 (剩餘 ${remainingMinutes} 分鐘)`);
+  return true;
+}
+
+// ========== AI 預測（帶緩存） ==========
+export const generateAQIForecast = async (
+  currentAQI: AQIDataPoint,
+  location: { lat: number; lon: number; name?: string },
+  realTimeData?: any
+): Promise<HourlyForecastData[]> => {
+  
+  const cacheKey = getCacheKey(location.lat, location.lon, currentAQI.aqi);
+  
+  // 檢查緩存
+  if (isCacheValid(forecastCache, cacheKey)) {
+    console.log('🎯 使用緩存的預測結果');
+    return forecastCache!.data;
+  }
+  
+  console.log('🤖 緩存未命中，開始 AI 預測...');
+  
+  // 準備即時污染物數據
+  const measurements = realTimeData ? {
+    pm25: realTimeData.pm25,
+    pm10: realTimeData.pm10,
+    no2: realTimeData.no2,
+    o3: realTimeData.o3,
+    so2: realTimeData.so2,
+    co: realTimeData.co,
+  } : {};
+
+  const now = new Date();
+  const currentHour = now.getHours();
+  
+  const prompt = `
+You are an air quality prediction expert with deep knowledge of atmospheric science and pollution patterns. Based on the current air quality data, predict the AQI for the next 12 hours.
+
+**Current Data:**
+- Location: ${location.name || `Lat: ${location.lat.toFixed(4)}, Lon: ${location.lon.toFixed(4)}`}
+- Current Time: ${now.toLocaleString()} (Hour: ${currentHour})
+- Current AQI: ${currentAQI.aqi}
+- Main Pollutant: ${currentAQI.pollutant}
+- ${currentAQI.pollutant} Concentration: ${currentAQI.concentration.toFixed(2)} µg/m³
+
+**Real-time Measurements:**
+${measurements.pm25 !== undefined ? `- PM2.5: ${measurements.pm25.toFixed(2)} µg/m³` : ''}
+${measurements.pm10 !== undefined ? `- PM10: ${measurements.pm10.toFixed(2)} µg/m³` : ''}
+${measurements.o3 !== undefined ? `- O₃: ${measurements.o3.toFixed(3)} ppm` : ''}
+${measurements.no2 !== undefined ? `- NO₂: ${measurements.no2.toFixed(3)} ppm` : ''}
+${measurements.so2 !== undefined ? `- SO₂: ${measurements.so2.toFixed(3)} ppm` : ''}
+${measurements.co !== undefined ? `- CO: ${measurements.co.toFixed(2)} ppm` : ''}
+
+**Prediction Requirements:**
+Predict hourly AQI for the next 12 hours considering:
+
+1. **Daily Patterns:**
+   - Morning rush hour (7-9 AM): Traffic increases, AQI typically rises
+   - Midday (10 AM-2 PM): Solar heating affects O₃ formation
+   - Evening rush hour (5-7 PM): Peak traffic, highest AQI
+   - Night (10 PM-5 AM): Lower traffic, AQI decreases
+
+2. **Pollutant-Specific Behavior:**
+   - PM2.5/PM10: Accumulates in stable air, disperses with wind
+   - O₃: Increases with sunlight, peaks in afternoon
+   - NO₂: Follows traffic patterns closely
+   - SO₂/CO: Industrial and traffic sources
+
+3. **Meteorological Factors:**
+   - Temperature inversion can trap pollutants
+   - Wind dispersion typically improves air quality
+   - Humidity affects PM accumulation
+
+4. **Location Context:**
+   - Urban areas: Consider traffic density
+   - Industrial zones: Factor in emissions
+   - Coastal areas: Sea breeze effects
+
+**IMPORTANT - Consistency Requirements:**
+- Base all predictions on current AQI: ${currentAQI.aqi}
+- Hour-to-hour variations should be realistic (±10-20 AQI points maximum)
+- Maintain consistency with current pollutant: ${currentAQI.pollutant}
+- Follow typical daily patterns systematically
+- Ensure predictions are reproducible for the same input conditions
+
+**Output Format:**
+Provide predictions for each of the next 12 hours with realistic, consistent variations.
+`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: prompt,
+      config: {
+        temperature: 0.3, // 降低隨機性，提高一致性
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              hour: { 
+                type: Type.STRING, 
+                description: 'Time in 12-hour format (e.g., "3 PM", "11 AM")' 
+              },
+              aqi: { 
+                type: Type.INTEGER, 
+                description: 'Predicted AQI value (0-500)' 
+              },
+              pollutant: { 
+                type: Type.STRING, 
+                description: 'Main pollutant: PM₂.₅, PM10, O₃, NO₂, SO₂, or CO' 
+              },
+              concentration: { 
+                type: Type.NUMBER, 
+                description: 'Estimated pollutant concentration' 
+              },
+              timestamp: { 
+                type: Type.STRING, 
+                description: 'ISO 8601 timestamp for that hour' 
+              }
+            },
+            required: ['hour', 'aqi', 'pollutant', 'concentration', 'timestamp']
+          }
+        }
+      }
+    });
+
+    const responseText = response.text || '';
+    if (!responseText.trim()) {
+      throw new Error('Empty forecast response from Gemini API');
+    }
+    
+    const forecast = JSON.parse(responseText) as HourlyForecastData[];
+    
+    // 緩存結果
+    forecastCache = {
+      data: forecast,
+      timestamp: Date.now(),
+      location: cacheKey,
+      baseAQI: currentAQI.aqi
+    };
+    
+    const cacheExpiryTime = new Date(Date.now() + CACHE_DURATION).toLocaleString();
+    
+    console.log('✅ Gemini AI 預測成功並已緩存:', {
+      hoursGenerated: forecast.length,
+      aqiRange: `${Math.min(...forecast.map(f => f.aqi))} - ${Math.max(...forecast.map(f => f.aqi))}`,
+      mainPollutants: [...new Set(forecast.map(f => f.pollutant))],
+      cacheValidUntil: cacheExpiryTime,
+      cacheKey: cacheKey
+    });
+    
+    return forecast;
+    
+  } catch (error) {
+    console.error("❌ Gemini AI 預測失敗:", error);
+    throw error;
+  }
+};
+
+// ========== 清除緩存（可選功能） ==========
+export const clearForecastCache = () => {
+  forecastCache = null;
+  console.log('🗑️ 預測緩存已清除');
+};
+
+// ========== 獲取緩存狀態（可選功能） ==========
+export const getForecastCacheStatus = () => {
+  if (!forecastCache) {
+    return { isCached: false };
+  }
+  
+  const now = Date.now();
+  const cacheAge = now - forecastCache.timestamp;
+  const remainingTime = CACHE_DURATION - cacheAge;
+  
+  return {
+    isCached: true,
+    ageMinutes: Math.round(cacheAge / 1000 / 60),
+    remainingMinutes: Math.round(remainingTime / 1000 / 60),
+    location: forecastCache.location,
+    baseAQI: forecastCache.baseAQI
+  };
+};
+
+// ========== Health Advice ==========
 export const generateHealthAdvice = async (
   currentAQI: AQIDataPoint,
   userProfile: UserHealthProfile
@@ -81,6 +303,7 @@ export const generateHealthAdvice = async (
   }
 };
 
+// ========== Smart Schedule ==========
 export const generateSmartSchedule = async (
   hourlyForecast: HourlyForecastData[]
 ): Promise<SmartScheduleSuggestion[]> => {
@@ -211,6 +434,7 @@ export const generateSmartSchedule = async (
   }
 };
 
+// ========== Air Story for Children ==========
 export const generateAirStoryForChild = async (
   location: string,
   historicalData: HistoricalDataPoint[]
@@ -223,7 +447,6 @@ export const generateAirStoryForChild = async (
   const maxAQI = Math.max(...historicalData.map(d => d.aqi));
   const minAQI = Math.min(...historicalData.map(d => d.aqi));
   
-  // 記錄數據以便除錯
   console.log('Story generation data:', {
     location,
     avgAQI: avgAQI.toFixed(1),
@@ -232,7 +455,6 @@ export const generateAirStoryForChild = async (
     dataPoints: historicalData.length
   });
   
-  // 根據 AQI 程度決定故事基調
   let airQualityLevel = '';
   let tone = '';
   
@@ -296,7 +518,6 @@ export const generateAirStoryForChild = async (
   } catch (error) {
     console.error("Error generating air story:", error);
     
-    // 更誠實的後備故事
     const getBasicStory = (locationName: string, avgAqi: number): string => {
       if (avgAqi <= 50) {
         return `In ${locationName}, the air sprites are dancing joyfully in the clean, sparkly sky! The wind fairies and tree friends are working together perfectly to keep the air fresh and pure. When we breathe, we can feel the happy sprites filling our lungs with healthy, clean air. Let's keep helping them by walking, biking, and taking care of our green spaces!`;
@@ -315,7 +536,7 @@ export const generateAirStoryForChild = async (
   }
 };
 
-// 🎯 修改: 使用預先生成的插圖（因 Imagen API 需要計費）
+// ========== Story Image ==========
 export const generateImageFromStory = async (
   storyText: string,
   avgAQI?: number
@@ -326,7 +547,6 @@ export const generateImageFromStory = async (
 
   console.log('📸 Loading pre-generated illustration based on AQI:', avgAQI);
 
-  // 根據 AQI 級別選擇對應圖片
   let imageName = 'moderate.png';
   
   if (avgAQI !== undefined) {
@@ -349,132 +569,4 @@ export const generateImageFromStory = async (
   console.log(`✅ Selected image: ${imagePath} for AQI: ${avgAQI}`);
   
   return imagePath;
-};
-
-
-
-
-export const generateAQIForecast = async (
-  currentAQI: AQIDataPoint,
-  location: { lat: number; lon: number; name?: string },
-  realTimeData?: any  // 來自 Flask API 的即時數據
-): Promise<HourlyForecastData[]> => {
-  
-  // 準備即時污染物數據
-  const measurements = realTimeData ? {
-    pm25: realTimeData.pm25,
-    pm10: realTimeData.pm10,
-    no2: realTimeData.no2,
-    o3: realTimeData.o3,
-    so2: realTimeData.so2,
-    co: realTimeData.co,
-  } : {};
-
-  const now = new Date();
-  const currentHour = now.getHours();
-  
-  const prompt = `
-You are an air quality prediction expert with deep knowledge of atmospheric science and pollution patterns. Based on the current air quality data, predict the AQI for the next 12 hours.
-
-**Current Data:**
-- Location: ${location.name || `Lat: ${location.lat.toFixed(4)}, Lon: ${location.lon.toFixed(4)}`}
-- Current Time: ${now.toLocaleString()} (Hour: ${currentHour})
-- Current AQI: ${currentAQI.aqi}
-- Main Pollutant: ${currentAQI.pollutant}
-- ${currentAQI.pollutant} Concentration: ${currentAQI.concentration.toFixed(2)} µg/m³
-
-**Real-time Measurements:**
-${measurements.pm25 !== undefined ? `- PM2.5: ${measurements.pm25.toFixed(2)} µg/m³` : ''}
-${measurements.pm10 !== undefined ? `- PM10: ${measurements.pm10.toFixed(2)} µg/m³` : ''}
-${measurements.o3 !== undefined ? `- O₃: ${measurements.o3.toFixed(3)} ppm` : ''}
-${measurements.no2 !== undefined ? `- NO₂: ${measurements.no2.toFixed(3)} ppm` : ''}
-${measurements.so2 !== undefined ? `- SO₂: ${measurements.so2.toFixed(3)} ppm` : ''}
-${measurements.co !== undefined ? `- CO: ${measurements.co.toFixed(2)} ppm` : ''}
-
-**Prediction Requirements:**
-Predict hourly AQI for the next 12 hours considering:
-
-1. **Daily Patterns:**
-   - Morning rush hour (7-9 AM): Traffic increases, AQI typically rises
-   - Midday (10 AM-2 PM): Solar heating affects O₃ formation
-   - Evening rush hour (5-7 PM): Peak traffic, highest AQI
-   - Night (10 PM-5 AM): Lower traffic, AQI decreases
-
-2. **Pollutant-Specific Behavior:**
-   - PM2.5/PM10: Accumulates in stable air, disperses with wind
-   - O₃: Increases with sunlight, peaks in afternoon
-   - NO₂: Follows traffic patterns closely
-   - SO₂/CO: Industrial and traffic sources
-
-3. **Meteorological Factors:**
-   - Temperature inversion can trap pollutants
-   - Wind dispersion typically improves air quality
-   - Humidity affects PM accumulation
-
-4. **Location Context:**
-   - Urban areas: Consider traffic density
-   - Industrial zones: Factor in emissions
-   - Coastal areas: Sea breeze effects
-
-**Output Format:**
-Provide predictions for each of the next 12 hours with realistic variations.
-`;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              hour: { 
-                type: Type.STRING, 
-                description: 'Time in 12-hour format (e.g., "3 PM", "11 AM")' 
-              },
-              aqi: { 
-                type: Type.INTEGER, 
-                description: 'Predicted AQI value (0-500)' 
-              },
-              pollutant: { 
-                type: Type.STRING, 
-                description: 'Main pollutant: PM₂.₅, PM10, O₃, NO₂, SO₂, or CO' 
-              },
-              concentration: { 
-                type: Type.NUMBER, 
-                description: 'Estimated pollutant concentration' 
-              },
-              timestamp: { 
-                type: Type.STRING, 
-                description: 'ISO 8601 timestamp for that hour' 
-              }
-            },
-            required: ['hour', 'aqi', 'pollutant', 'concentration', 'timestamp']
-          }
-        }
-      }
-    });
-
-    const responseText = response.text || '';
-    if (!responseText.trim()) {
-      throw new Error('Empty forecast response from Gemini API');
-    }
-    
-    const forecast = JSON.parse(responseText) as HourlyForecastData[];
-    
-    console.log('✅ Gemini AI 預測成功:', {
-      hoursGenerated: forecast.length,
-      aqiRange: `${Math.min(...forecast.map(f => f.aqi))} - ${Math.max(...forecast.map(f => f.aqi))}`,
-      mainPollutants: [...new Set(forecast.map(f => f.pollutant))]
-    });
-    
-    return forecast;
-    
-  } catch (error) {
-    console.error("❌ Gemini AI 預測失敗:", error);
-    throw error;
-  }
 };
